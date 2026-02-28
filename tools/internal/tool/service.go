@@ -19,8 +19,10 @@ const (
 	controlPlaneURLEnv        = "SAKI_CONTROL_PLANE_URL"
 	templateRepoEnv           = "SAKI_TEMPLATE_REPOSITORY"
 	templateRefEnv            = "SAKI_TEMPLATE_REF"
+	dockerRegistryEnv         = "SAKI_DOCKER_REGISTRY"
+	registryOnlyEnv           = "SAKI_REGISTRY_ONLY"
 	defaultTemplateRepository = "https://github.com/1800agents/saki-app-template"
-	tokenUser                 = "token"
+	defaultDockerRegistry     = "https://registry.corgi-teeth.ts.net/v2/"
 )
 
 type Logger interface {
@@ -34,7 +36,6 @@ type controlPlaneClient interface {
 }
 
 type dockerClient interface {
-	Login(ctx context.Context, registry, username, password string) error
 	Build(ctx context.Context, workDir, image string) error
 	Push(ctx context.Context, image string) error
 }
@@ -53,6 +54,8 @@ type Service struct {
 	writeEnv             func(appDir, name, description string) error
 	templateRepoValue    func() string
 	templateRefValue     func() string
+	dockerRegistryValue  func() string
+	registryOnlyValue    func() string
 	controlPlaneURLValue func() string
 }
 
@@ -72,6 +75,8 @@ func NewService() *Service {
 		writeEnv:             tooltemplate.WriteEnv,
 		templateRepoValue:    func() string { return os.Getenv(templateRepoEnv) },
 		templateRefValue:     func() string { return os.Getenv(templateRefEnv) },
+		dockerRegistryValue:  func() string { return os.Getenv(dockerRegistryEnv) },
+		registryOnlyValue:    func() string { return os.Getenv(registryOnlyEnv) },
 		controlPlaneURLValue: func() string { return os.Getenv(controlPlaneURLEnv) },
 	}
 }
@@ -116,7 +121,11 @@ func (s *Service) DeployApp(ctx context.Context, in contracts.DeployAppInput) (c
 		return zero, err
 	}
 
-	image, err := buildImageName(prepareRes.Repository, prepareRes.RequiredTag)
+	imageRepository := resolveImageRepository(
+		prepareRes.Repository,
+		resolveDockerRegistry(envValue(s.dockerRegistryValue)),
+	)
+	image, err := buildImageName(imageRepository, prepareRes.RequiredTag)
 	if err != nil {
 		return zero, err
 	}
@@ -149,14 +158,18 @@ func (s *Service) DeployApp(ctx context.Context, in contracts.DeployAppInput) (c
 	}
 
 	dockerClient := s.newDockerClient(s.logger)
-	if err := dockerClient.Login(ctx, registryHost(prepareRes.Repository), tokenUser, prepareRes.PushToken); err != nil {
-		return zero, err
-	}
 	if err := dockerClient.Build(ctx, workDir, image); err != nil {
 		return zero, err
 	}
 	if err := dockerClient.Push(ctx, image); err != nil {
 		return zero, err
+	}
+
+	if envEnabled(envValue(s.registryOnlyValue)) {
+		return contracts.DeployAppOutput{
+			Image:  image,
+			Status: "pushed",
+		}, nil
 	}
 
 	deployRes, err := cp.DeployApp(ctx, controlplane.DeployAppRequest{
@@ -210,20 +223,57 @@ func buildImageName(repository, requiredTag string) (string, error) {
 	return repo + ":" + tag, nil
 }
 
-func registryHost(repository string) string {
-	repo := strings.TrimSpace(repository)
-	if repo == "" {
-		return ""
-	}
-	if strings.Contains(repo, "://") {
-		parts := strings.SplitN(repo, "://", 2)
-		repo = parts[1]
+func resolveDockerRegistry(envRegistry string) string {
+	return firstNonEmpty(envRegistry, defaultDockerRegistry)
+}
+
+func resolveImageRepository(prepareRepository, registry string) string {
+	repository := strings.TrimSpace(prepareRepository)
+	normalizedRegistry := normalizeRegistryForImage(registry)
+
+	if repository == "" || normalizedRegistry == "" {
+		return repository
 	}
 
-	if slash := strings.IndexByte(repo, '/'); slash >= 0 {
-		return repo[:slash]
+	hasHost := false
+	if strings.Contains(repository, "://") {
+		parts := strings.SplitN(repository, "://", 2)
+		repository = parts[1]
+		hasHost = true
 	}
-	return repo
+
+	if !hasHost {
+		firstSegment := repository
+		if slash := strings.IndexByte(firstSegment, '/'); slash >= 0 {
+			firstSegment = firstSegment[:slash]
+		}
+		hasHost = firstSegment == "localhost" || strings.Contains(firstSegment, ".") || strings.Contains(firstSegment, ":")
+	}
+
+	if hasHost {
+		if slash := strings.IndexByte(repository, '/'); slash >= 0 {
+			return normalizedRegistry + "/" + repository[slash+1:]
+		}
+		return normalizedRegistry + "/" + repository
+	}
+
+	return normalizedRegistry + "/" + repository
+}
+
+func normalizeRegistryForImage(registry string) string {
+	value := strings.TrimSpace(registry)
+	if value == "" {
+		return ""
+	}
+
+	if strings.Contains(value, "://") {
+		parts := strings.SplitN(value, "://", 2)
+		value = parts[1]
+	}
+
+	value = strings.TrimRight(value, "/")
+	value = strings.TrimSuffix(value, "/v2")
+	return strings.TrimRight(value, "/")
 }
 
 func resolveTemplateRepository(prepareRepository, envRepository string) string {
@@ -246,4 +296,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func envValue(read func() string) string {
+	if read == nil {
+		return ""
+	}
+	return read()
+}
+
+func envEnabled(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return strings.EqualFold(trimmed, "1") || strings.EqualFold(trimmed, "true")
 }

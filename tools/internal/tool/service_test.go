@@ -92,20 +92,17 @@ func TestDeployApp_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected .env write params: %+v", wroteEnv)
 	}
 
-	if dockerStub.loginRegistry != "registry.internal" || dockerStub.loginUser != tokenUser || dockerStub.loginPassword != "push-token" {
-		t.Fatalf("unexpected docker login params: registry=%q user=%q", dockerStub.loginRegistry, dockerStub.loginUser)
-	}
-	if dockerStub.buildDir != tempDir || dockerStub.image != "registry.internal/owner/my-app:abc1234" {
+	if dockerStub.buildDir != tempDir || dockerStub.image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("unexpected docker build params: dir=%q image=%q", dockerStub.buildDir, dockerStub.image)
 	}
-	if dockerStub.pushImage != "registry.internal/owner/my-app:abc1234" {
+	if dockerStub.pushImage != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("unexpected docker push image: %q", dockerStub.pushImage)
 	}
 
 	if len(cp.deployReqs) != 1 {
 		t.Fatalf("expected one deploy request, got %d", len(cp.deployReqs))
 	}
-	if cp.deployReqs[0].Image != "registry.internal/owner/my-app:abc1234" {
+	if cp.deployReqs[0].Image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("unexpected deploy image: %q", cp.deployReqs[0].Image)
 	}
 
@@ -116,7 +113,7 @@ func TestDeployApp_HappyPath(t *testing.T) {
 	if out.AppID != "app_123" || out.DeploymentID != "dep_123" || out.URL != "https://my-app.saki.internal" || out.Status != "deploying" {
 		t.Fatalf("unexpected output payload: %+v", out)
 	}
-	if out.Image != "registry.internal/owner/my-app:abc1234" {
+	if out.Image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("expected output image to include required tag, got %q", out.Image)
 	}
 }
@@ -159,7 +156,7 @@ func TestDeployApp_StopsOnPrepareFailure(t *testing.T) {
 }
 
 func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
-	dockerErr := errors.New("docker login failed")
+	dockerErr := errors.New("docker build failed")
 	cp := &stubControlPlane{
 		prepareRes: controlplane.PrepareAppResponse{
 			Repository:  "registry.internal/owner/my-app",
@@ -167,7 +164,7 @@ func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
 			RequiredTag: "abc1234",
 		},
 	}
-	dockerStub := &stubDockerClient{loginErr: dockerErr}
+	dockerStub := &stubDockerClient{buildErr: dockerErr}
 
 	svc := &Service{
 		newControlPlane:   func(string) (controlPlaneClient, error) { return cp, nil },
@@ -179,6 +176,9 @@ func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
 		writeEnv:          func(string, string, string) error { return nil },
 		templateRepoValue: func() string { return "" },
 		templateRefValue:  func() string { return "" },
+		dockerRegistryValue: func() string {
+			return ""
+		},
 		logger:            &noopLogger{},
 	}
 
@@ -191,7 +191,52 @@ func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
 		t.Fatalf("expected docker error, got %v", err)
 	}
 	if len(cp.deployReqs) != 0 {
-		t.Fatalf("expected no deploy call after docker login failure, got %d", len(cp.deployReqs))
+		t.Fatalf("expected no deploy call after docker failure, got %d", len(cp.deployReqs))
+	}
+}
+
+func TestDeployApp_RegistryOnlySkipsDeploy(t *testing.T) {
+	cp := &stubControlPlane{
+		prepareRes: controlplane.PrepareAppResponse{
+			Repository:  "registry.internal/owner/my-app",
+			RequiredTag: "abc1234",
+		},
+	}
+	dockerStub := &stubDockerClient{}
+	tempDir := filepath.Join(t.TempDir(), "work")
+
+	svc := &Service{
+		newControlPlane:      func(string) (controlPlaneClient, error) { return cp, nil },
+		newDockerClient:      func(Logger) dockerClient { return dockerStub },
+		resolveGitCommit:     func(context.Context) (string, error) { return "abc", nil },
+		makeTempDir:          func() (string, error) { return tempDir, nil },
+		removeAll:            func(string) error { return nil },
+		cloneFromPrepare:     func(context.Context, tooltemplate.PrepareResponse, string) error { return nil },
+		writeEnv:             func(string, string, string) error { return nil },
+		templateRepoValue:    func() string { return "" },
+		templateRefValue:     func() string { return "" },
+		dockerRegistryValue:  func() string { return "" },
+		registryOnlyValue:    func() string { return "true" },
+		controlPlaneURLValue: func() string { return "" },
+		logger:               &noopLogger{},
+	}
+
+	out, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
+		Name:                "my-app",
+		Description:         "internal app",
+		SakiControlPlaneURL: "https://cp.internal?token=test-token",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(cp.deployReqs) != 0 {
+		t.Fatalf("expected deploy to be skipped in registry-only mode, got %d deploy requests", len(cp.deployReqs))
+	}
+	if out.Status != "pushed" {
+		t.Fatalf("expected status pushed, got %q", out.Status)
+	}
+	if out.Image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
+		t.Fatalf("unexpected output image: %q", out.Image)
 	}
 }
 
@@ -218,6 +263,38 @@ func TestResolveTemplateRepository(t *testing.T) {
 	})
 }
 
+func TestResolveDockerRegistry(t *testing.T) {
+	t.Run("uses env value when set", func(t *testing.T) {
+		got := resolveDockerRegistry("https://registry.env.example/v2/")
+		if got != "https://registry.env.example/v2/" {
+			t.Fatalf("expected env registry, got %q", got)
+		}
+	})
+
+	t.Run("falls back to default value when env is empty", func(t *testing.T) {
+		got := resolveDockerRegistry(" ")
+		if got != defaultDockerRegistry {
+			t.Fatalf("expected default registry %q, got %q", defaultDockerRegistry, got)
+		}
+	})
+}
+
+func TestResolveImageRepository(t *testing.T) {
+	t.Run("replaces prepare registry host with configured registry", func(t *testing.T) {
+		got := resolveImageRepository("registry.internal/owner/my-app", "https://registry.corgi-teeth.ts.net/v2/")
+		if got != "registry.corgi-teeth.ts.net/owner/my-app" {
+			t.Fatalf("expected repository with configured registry host, got %q", got)
+		}
+	})
+
+	t.Run("keeps path-only repository and prefixes configured registry", func(t *testing.T) {
+		got := resolveImageRepository("owner/my-app", "https://registry.corgi-teeth.ts.net/v2/")
+		if got != "registry.corgi-teeth.ts.net/owner/my-app" {
+			t.Fatalf("expected prefixed repository, got %q", got)
+		}
+	})
+}
+
 func TestFirstNonEmpty(t *testing.T) {
 	got := firstNonEmpty(" ", "\n", "value", "later")
 	if got != "value" {
@@ -227,6 +304,15 @@ func TestFirstNonEmpty(t *testing.T) {
 	got = firstNonEmpty(" ", "\n")
 	if got != "" {
 		t.Fatalf("expected empty string when all values are empty, got %q", got)
+	}
+}
+
+func TestEnvEnabled(t *testing.T) {
+	if !envEnabled("true") || !envEnabled("1") || !envEnabled(" TRUE ") {
+		t.Fatal("expected true-like values to be enabled")
+	}
+	if envEnabled("") || envEnabled("0") || envEnabled("false") {
+		t.Fatal("expected false-like values to be disabled")
 	}
 }
 
