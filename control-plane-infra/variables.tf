@@ -1,25 +1,23 @@
-variable "project_name" {
-  description = "Short project identifier used for naming."
+variable "kubeconfig_path" {
+  description = "Path to the kubeconfig file."
   type        = string
+  default     = "~/.kube/saki.yaml"
 }
 
-variable "environment" {
-  description = "Deployment environment name (for example: dev, staging, prod)."
+variable "kubeconfig_context" {
+  description = "Kubernetes context to use from the kubeconfig file."
   type        = string
-
-  validation {
-    condition     = can(regex("^[a-z0-9-]+$", var.environment))
-    error_message = "environment must contain only lowercase letters, digits, and hyphens."
-  }
+  default     = "saki"
 }
 
-variable "region" {
-  description = "Target region for infrastructure resources."
+variable "tailscale_oauth_client_id" {
+  description = "Tailscale OAuth client ID. Only required when creating tailscale operator, else can be left blank."
   type        = string
+  sensitive   = true
 }
 
-variable "tags" {
-  description = "Additional tags/labels to apply to resources."
-  type        = map(string)
-  default     = {}
+variable "tailscale_oauth_client_secret" {
+  description = "Tailscale OAuth client secret. Only required when creating tailscale operator, else can be left blank."
+  type        = string
+  sensitive   = true
 }

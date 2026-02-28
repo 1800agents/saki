@@ -1,28 +1,46 @@
-# Terraform IaC
+# Homelab Infra
 
-Terraform baseline for Saki infrastructure.
+## Setup
 
-## Files
-
-- `versions.tf`: Terraform CLI version constraint.
-- `variables.tf`: Input variables for project/environment/region/tags.
-- `locals.tf`: Shared naming and default tagging logic.
-- `main.tf`: Root module entry point where provider blocks and resources are added.
-- `outputs.tf`: Common outputs reused by automation and CI.
-- `terraform.tfvars.example`: Example input values.
-
-## Quick start
-
-```bash
-cd control-plane-infra
-cp terraform.tfvars.example terraform.tfvars
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan
+### Base
+Create the base namespaces and secrets
+```shell
+terraform apply -target=module.base
 ```
 
-## Notes
+### Edit Secrets
+Manually set the Kubernetes secrets created in the previous step
 
-- State uses Terraform defaults (local state) until a backend is configured.
-- Keep provider/resource definitions in `main.tf` or split into additional `*.tf` files as the stack grows.
+### DB
+Create the postgres DB
+```shell
+terraform apply -target=module.db
+```
+
+### Tailscale
+Get OAuth credentials from the [Tailscale admin console](https://login.tailscale.com/admin/settings/oauth):
+1. Go to **Settings → OAuth clients → Generate OAuth client**
+2. Grant the **Devices** scope with write access
+3. Copy the client ID and secret, then pass them to Terraform:
+
+```shell
+terraform apply \
+  -var="tailscale_oauth_client_id=<client-id>" \
+  -var="tailscale_oauth_client_secret=<client-secret>"
+```
+
+Or set them in a `terraform.tfvars` file (do not commit this file):
+```hcl
+tailscale_oauth_client_id     = "<client-id>"
+tailscale_oauth_client_secret = "<client-secret>"
+```
+
+### Everything else
+```shell
+terraform apply
+```
+
+## Format Files
+```
+terraform fmt --recursive
+```
