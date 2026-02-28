@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: ${namespace}
+  labels:
+    app: control-plane
+spec:
+  replicas: ${replicas}
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      serviceAccountName: control-plane
+      containers:
+        - name: control-plane
+          image: ${image}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CONTROL_PLANE_HOST
+              value: "0.0.0.0"
+            - name: CONTROL_PLANE_PORT
+              value: "8080"
+            - name: REGISTRY_HOST
+              value: ${registry_host}
+            - name: APP_BASE_DOMAIN
+              value: ${app_base_domain}
+            - name: K8S_NAMESPACE
+              value: ${apps_namespace}
+            - name: DEFAULT_APP_TTL_HOURS
+              value: "${default_app_ttl_hours}"
+            - name: ADMIN_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: ${secret_name}
+                  key: ADMIN_TOKENS
+            - name: POSTGRES_HOST
+              value: ${postgres_host}
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_DATABASE
+              value: saki
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${secret_name}
+                  key: POSTGRES_PASSWORD

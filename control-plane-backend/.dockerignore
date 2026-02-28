@@ -1,0 +1,10 @@
+.git
+.gitignore
+node_modules
+dist
+.env
+npm-debug.log*
+*.tsbuildinfo
+README.md
+spec
+tools

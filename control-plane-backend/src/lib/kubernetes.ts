@@ -1,0 +1,188 @@
+import * as fs from 'node:fs';
+import * as k8s from '@kubernetes/client-node';
+import { config } from '../config/env';
+import type { AppRecord, LogsPage } from '../types/app';
+
+type KubeAuthSource = 'incluster' | 'kubeconfig';
+
+interface KubeConfigResolution {
+  kubeConfig: k8s.KubeConfig;
+  source: KubeAuthSource;
+}
+
+interface KubeBootstrapDiagnostics {
+  kubernetesServiceHost: string;
+  inClusterTokenPath: string;
+  inClusterTokenExists: boolean;
+  inClusterCredentialsDetected: boolean;
+  kubeconfigPath: string;
+  kubeconfigPathExists: boolean;
+}
+
+const IN_CLUSTER_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+
+function hasInClusterCredentials(): boolean {
+  return Boolean(process.env.KUBERNETES_SERVICE_HOST) && fs.existsSync(IN_CLUSTER_TOKEN_PATH);
+}
+
+function getKubeBootstrapDiagnostics(): KubeBootstrapDiagnostics {
+  const kubeconfigPath = config.k8sKubeconfigPath || '(unset)';
+  return {
+    kubernetesServiceHost: process.env.KUBERNETES_SERVICE_HOST || '(unset)',
+    inClusterTokenPath: IN_CLUSTER_TOKEN_PATH,
+    inClusterTokenExists: fs.existsSync(IN_CLUSTER_TOKEN_PATH),
+    inClusterCredentialsDetected: hasInClusterCredentials(),
+    kubeconfigPath,
+    kubeconfigPathExists: kubeconfigPath !== '(unset)' && fs.existsSync(kubeconfigPath),
+  };
+}
+
+function buildFailureHint(reason: string, diagnostics: KubeBootstrapDiagnostics): string {
+  if (!diagnostics.inClusterCredentialsDetected && diagnostics.kubeconfigPath === '(unset)') {
+    return 'Set K8S_KUBECONFIG_PATH when running outside Kubernetes.';
+  }
+
+  if (!diagnostics.inClusterCredentialsDetected && !diagnostics.kubeconfigPathExists) {
+    return `Kubeconfig file not found at ${diagnostics.kubeconfigPath}.`;
+  }
+
+  if (reason.includes('No active cluster')) {
+    return `Check kubeconfig current-context in ${diagnostics.kubeconfigPath}.`;
+  }
+
+  return 'Verify in-cluster service account access or kubeconfig current-context/cluster values.';
+}
+
+function loadFromKubeconfigPath(path: string): k8s.KubeConfig {
+  if (!fs.existsSync(path)) {
+    throw new Error(`Kubeconfig file does not exist: ${path}`);
+  }
+
+  const kubeConfig = new k8s.KubeConfig();
+  kubeConfig.loadFromFile(path);
+
+  const currentContext = kubeConfig.getCurrentContext();
+  if (!currentContext) {
+    const contexts = kubeConfig
+      .getContexts()
+      .map((ctx) => ctx.name)
+      .join(', ');
+    throw new Error(
+      `Kubeconfig file has no current-context set: ${path}${contexts ? ` (available contexts: ${contexts})` : ''}`
+    );
+  }
+
+  if (!kubeConfig.getCurrentCluster()) {
+    throw new Error(
+      `Kubeconfig current-context "${currentContext}" does not resolve to an active cluster: ${path}`
+    );
+  }
+
+  return kubeConfig;
+}
+
+function resolveKubeConfig(): KubeConfigResolution {
+  if (hasInClusterCredentials()) {
+    const kubeConfig = new k8s.KubeConfig();
+    kubeConfig.loadFromCluster();
+    return { kubeConfig, source: 'incluster' };
+  }
+
+  if (!config.k8sKubeconfigPath) {
+    throw new Error(
+      'K8S_KUBECONFIG_PATH is required when running outside Kubernetes (in-cluster credentials not detected)'
+    );
+  }
+
+  return {
+    kubeConfig: loadFromKubeconfigPath(config.k8sKubeconfigPath),
+    source: 'kubeconfig',
+  };
+}
+
+export class KubernetesDeployer {
+  private readonly namespace: string;
+  private readonly enabled: boolean;
+  private readonly authSource?: KubeAuthSource;
+  private readonly initError?: unknown;
+
+  private readonly kubeConfig?: k8s.KubeConfig;
+  private readonly appsApi?: k8s.AppsV1Api;
+  private readonly coreApi?: k8s.CoreV1Api;
+  private readonly networkingApi?: k8s.NetworkingV1Api;
+  private readonly batchApi?: k8s.BatchV1Api;
+  private readonly objectApi?: k8s.KubernetesObjectApi;
+
+  constructor() {
+    this.namespace = config.k8sNamespace;
+
+    try {
+      const resolved = resolveKubeConfig();
+      this.kubeConfig = resolved.kubeConfig;
+      this.authSource = resolved.source;
+      this.appsApi = resolved.kubeConfig.makeApiClient(k8s.AppsV1Api);
+      this.coreApi = resolved.kubeConfig.makeApiClient(k8s.CoreV1Api);
+      this.networkingApi = resolved.kubeConfig.makeApiClient(k8s.NetworkingV1Api);
+      this.batchApi = resolved.kubeConfig.makeApiClient(k8s.BatchV1Api);
+      this.objectApi = k8s.KubernetesObjectApi.makeApiClient(resolved.kubeConfig);
+      this.enabled = true;
+      console.log(`Kubernetes client initialized (auth=${this.authSource}, namespace=${this.namespace})`);
+    } catch (error) {
+      this.enabled = false;
+      this.initError = error;
+      const reason = error instanceof Error ? error.message : String(error);
+      const diagnostics = getKubeBootstrapDiagnostics();
+      const hint = buildFailureHint(reason, diagnostics);
+      console.warn(
+        `Kubernetes client bootstrap failed (${reason}). Running in no-op mode. ` +
+          `Diagnostics: service_host=${diagnostics.kubernetesServiceHost}, ` +
+          `token_path=${diagnostics.inClusterTokenPath}, token_exists=${diagnostics.inClusterTokenExists}, ` +
+          `incluster_detected=${diagnostics.inClusterCredentialsDetected}, ` +
+          `kubeconfig_path=${diagnostics.kubeconfigPath}, kubeconfig_exists=${diagnostics.kubeconfigPathExists}. ` +
+          `Hint: ${hint}`
+      );
+    }
+  }
+
+  async deployApp(app: AppRecord): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    console.log(
+      `deployApp: ${app.app_id} -> ${app.image} in namespace ${this.namespace} (auth=${this.authSource})`
+    );
+  }
+
+  async stopApp(app: AppRecord): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    console.log(`stopApp: ${app.app_id} in namespace ${this.namespace}`);
+  }
+
+  async startApp(app: AppRecord): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    console.log(`startApp: ${app.app_id} in namespace ${this.namespace}`);
+  }
+
+  async deleteApp(app: AppRecord): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    console.log(`deleteApp: ${app.app_id} in namespace ${this.namespace}`);
+  }
+
+  async readLogs(_app: AppRecord, _cursor?: string, _limit?: number): Promise<LogsPage> {
+    if (!this.enabled) {
+      return { data: [], next_cursor: null };
+    }
+
+    return { data: [], next_cursor: null };
+  }
+}

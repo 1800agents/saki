@@ -1,0 +1,32 @@
+# https://artifacthub.io/packages/helm/bitnami/postgresql
+auth:
+  existingSecret: ${existing_secret_name}
+  secretKeys:
+    adminPasswordKey: postgres-password
+  enablePostgresUser: true
+  database: saki
+
+passwordUpdateJob:
+  enabled: false
+
+primary:
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: local-path
+  
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+service:
+  type: ClusterIP
+  ports:
+    postgresql: 5432
+
+metrics:
+  enabled: true
