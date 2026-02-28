@@ -113,14 +113,6 @@ export class AppService {
   }
 
   async upsertApp({ owner, name, description, image }: UpsertAppInput): Promise<UpsertAppResponse> {
-    const expectedRepository = `${config.registryHost}/${owner}/${name}`;
-
-    if (!image.startsWith(`${expectedRepository}:`)) {
-      throw new ApiError(400, 'invalid_image_namespace', 'Image must match owner/app namespace', {
-        expected_prefix: `${expectedRepository}:<tag>`,
-      });
-    }
-
     const url = `https://${name}.${config.appBaseDomain}`;
     const now = new Date().toISOString();
     const ttlExpiry = computeTtlExpiry();
