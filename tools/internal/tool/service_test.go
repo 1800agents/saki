@@ -170,16 +170,16 @@ func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
 	dockerStub := &stubDockerClient{loginErr: dockerErr}
 
 	svc := &Service{
-		newControlPlane:  func(string) (controlPlaneClient, error) { return cp, nil },
-		newDockerClient:  func(Logger) dockerClient { return dockerStub },
-		resolveGitCommit: func(context.Context) (string, error) { return "abc", nil },
-		makeTempDir:      func() (string, error) { return t.TempDir(), nil },
-		removeAll:        func(string) error { return nil },
-		cloneFromPrepare: func(context.Context, tooltemplate.PrepareResponse, string) error { return nil },
-		writeEnv:         func(string, string, string) error { return nil },
+		newControlPlane:   func(string) (controlPlaneClient, error) { return cp, nil },
+		newDockerClient:   func(Logger) dockerClient { return dockerStub },
+		resolveGitCommit:  func(context.Context) (string, error) { return "abc", nil },
+		makeTempDir:       func() (string, error) { return t.TempDir(), nil },
+		removeAll:         func(string) error { return nil },
+		cloneFromPrepare:  func(context.Context, tooltemplate.PrepareResponse, string) error { return nil },
+		writeEnv:          func(string, string, string) error { return nil },
 		templateRepoValue: func() string { return "" },
 		templateRefValue:  func() string { return "" },
-		logger:           &noopLogger{},
+		logger:            &noopLogger{},
 	}
 
 	_, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
@@ -230,13 +230,45 @@ func TestFirstNonEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveControlPlaneURL(t *testing.T) {
+	t.Run("uses call input when provided", func(t *testing.T) {
+		got, err := resolveControlPlaneURL("https://from-input.example?token=abc", "https://from-env.example?token=def")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if got != "https://from-input.example?token=abc" {
+			t.Fatalf("expected input URL, got %q", got)
+		}
+	})
+
+	t.Run("falls back to environment value when input missing", func(t *testing.T) {
+		got, err := resolveControlPlaneURL("  ", "https://from-env.example?token=def")
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if got != "https://from-env.example?token=def" {
+			t.Fatalf("expected env URL, got %q", got)
+		}
+	})
+
+	t.Run("returns clear error when both input and environment are missing", func(t *testing.T) {
+		_, err := resolveControlPlaneURL(" ", "\n")
+		if err == nil {
+			t.Fatal("expected error when no control plane URL is provided")
+		}
+		if err.Error() != "resolve control plane URL: saki_control_plane_url is required (or set SAKI_CONTROL_PLANE_URL) (invalid_input)" {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 type stubControlPlane struct {
-	prepareRes controlplane.PrepareAppResponse
-	prepareErr error
+	prepareRes  controlplane.PrepareAppResponse
+	prepareErr  error
 	prepareReqs []controlplane.PrepareAppRequest
 
-	deployRes controlplane.DeployAppResponse
-	deployErr error
+	deployRes  controlplane.DeployAppResponse
+	deployErr  error
 	deployReqs []controlplane.DeployAppRequest
 }
 

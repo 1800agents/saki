@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	controlPlaneURLEnv        = "SAKI_CONTROL_PLANE_URL"
 	templateRepoEnv           = "SAKI_TEMPLATE_REPOSITORY"
 	templateRefEnv            = "SAKI_TEMPLATE_REF"
 	defaultTemplateRepository = "https://github.com/1800agents/saki-app-template"
@@ -42,16 +43,17 @@ type controlPlaneFactory func(controlPlaneURL string) (controlPlaneClient, error
 
 // Service owns deploy orchestration and runtime server lifecycle.
 type Service struct {
-	logger            Logger
-	newControlPlane   controlPlaneFactory
-	newDockerClient   func(logger Logger) dockerClient
-	resolveGitCommit  func(ctx context.Context) (string, error)
-	makeTempDir       func() (string, error)
-	removeAll         func(path string) error
-	cloneFromPrepare  func(ctx context.Context, prepare tooltemplate.PrepareResponse, destinationDir string) error
-	writeEnv          func(appDir, name, description string) error
-	templateRepoValue func() string
-	templateRefValue  func() string
+	logger               Logger
+	newControlPlane      controlPlaneFactory
+	newDockerClient      func(logger Logger) dockerClient
+	resolveGitCommit     func(ctx context.Context) (string, error)
+	makeTempDir          func() (string, error)
+	removeAll            func(path string) error
+	cloneFromPrepare     func(ctx context.Context, prepare tooltemplate.PrepareResponse, destinationDir string) error
+	writeEnv             func(appDir, name, description string) error
+	templateRepoValue    func() string
+	templateRefValue     func() string
+	controlPlaneURLValue func() string
 }
 
 func NewService() *Service {
@@ -65,11 +67,12 @@ func NewService() *Service {
 		makeTempDir: func() (string, error) {
 			return os.MkdirTemp("", "saki-template-*")
 		},
-		removeAll:         os.RemoveAll,
-		cloneFromPrepare:  tooltemplate.CloneFromPrepare,
-		writeEnv:          tooltemplate.WriteEnv,
-		templateRepoValue: func() string { return os.Getenv(templateRepoEnv) },
-		templateRefValue:  func() string { return os.Getenv(templateRefEnv) },
+		removeAll:            os.RemoveAll,
+		cloneFromPrepare:     tooltemplate.CloneFromPrepare,
+		writeEnv:             tooltemplate.WriteEnv,
+		templateRepoValue:    func() string { return os.Getenv(templateRepoEnv) },
+		templateRefValue:     func() string { return os.Getenv(templateRefEnv) },
+		controlPlaneURLValue: func() string { return os.Getenv(controlPlaneURLEnv) },
 	}
 }
 
@@ -86,7 +89,16 @@ func (s *Service) DeployApp(ctx context.Context, in contracts.DeployAppInput) (c
 		return zero, apperrors.Wrap(apperrors.CodeInvalidInput, "validate deploy input", err)
 	}
 
-	cp, err := s.newControlPlane(in.SakiControlPlaneURL)
+	envControlPlaneURL := ""
+	if s.controlPlaneURLValue != nil {
+		envControlPlaneURL = s.controlPlaneURLValue()
+	}
+	controlPlaneURL, err := resolveControlPlaneURL(in.SakiControlPlaneURL, envControlPlaneURL)
+	if err != nil {
+		return zero, err
+	}
+
+	cp, err := s.newControlPlane(controlPlaneURL)
 	if err != nil {
 		return zero, err
 	}
@@ -216,6 +228,14 @@ func registryHost(repository string) string {
 
 func resolveTemplateRepository(prepareRepository, envRepository string) string {
 	return firstNonEmpty(prepareRepository, envRepository, defaultTemplateRepository)
+}
+
+func resolveControlPlaneURL(inputURL, envURL string) (string, error) {
+	if url := firstNonEmpty(inputURL, envURL); url != "" {
+		return url, nil
+	}
+
+	return "", apperrors.New(apperrors.CodeInvalidInput, "resolve control plane URL", "saki_control_plane_url is required (or set SAKI_CONTROL_PLANE_URL)")
 }
 
 func firstNonEmpty(values ...string) string {

@@ -57,7 +57,7 @@ func NewServer(service deployService, logger Logger) *Server {
 			"has_url":     strings.TrimSpace(in.SakiControlPlaneURL) != "",
 		})
 
-		if missing := missingDeployFields(in); len(missing) > 0 {
+		if missing := missingDeployFields(in, strings.TrimSpace(os.Getenv("SAKI_CONTROL_PLANE_URL")) != ""); len(missing) > 0 {
 			missingMessage := missingFieldsMessage(missing)
 			logger.Info("deploy input incomplete", map[string]any{
 				"missing_fields": missing,
@@ -148,6 +148,7 @@ func deployToolDefinition() *sdkmcp.Tool {
 					"maxLength":   300,
 				},
 			},
+			"required":             []string{"name", "description"},
 			"additionalProperties": false,
 		},
 	}
@@ -160,9 +161,9 @@ func normalizeDeployInput(in contracts.DeployAppInput) contracts.DeployAppInput 
 	return in
 }
 
-func missingDeployFields(in contracts.DeployAppInput) []string {
+func missingDeployFields(in contracts.DeployAppInput, hasControlPlaneEnv bool) []string {
 	missing := make([]string, 0, 3)
-	if in.SakiControlPlaneURL == "" {
+	if in.SakiControlPlaneURL == "" && !hasControlPlaneEnv {
 		missing = append(missing, "saki_control_plane_url")
 	}
 	if in.Name == "" {
