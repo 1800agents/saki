@@ -6,9 +6,13 @@ export class PostgresProvisioner {
   private readonly pool: Pool | null;
 
   constructor() {
-    this.pool = config.postgresUrl
+    this.pool = config.postgresPassword
       ? new Pool({
-          connectionString: config.postgresUrl,
+          host: config.postgresHost,
+          port: config.postgresPort,
+          user: config.postgresUser,
+          password: config.postgresPassword,
+          database: config.postgresDatabase,
         })
       : null;
   }

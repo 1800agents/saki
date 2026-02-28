@@ -14,7 +14,11 @@ export interface Config {
   appBaseDomain: string;
   defaultAppTtlHours: number;
   adminTokens: Set<string>;
-  postgresUrl: string;
+  postgresHost: string;
+  postgresPort: number;
+  postgresUser: string;
+  postgresPassword: string;
+  postgresDatabase: string;
   k8sNamespace: string;
   k8sKubeconfigPath: string;
 }
@@ -31,7 +35,11 @@ export const config: Config = {
       .map((token) => token.trim())
       .filter(Boolean)
   ),
-  postgresUrl: process.env.POSTGRES_URL || '',
+  postgresHost: process.env.POSTGRES_HOST || 'localhost',
+  postgresPort: readNumber(process.env.POSTGRES_PORT, 5432),
+  postgresUser: process.env.POSTGRES_USER || 'postgres',
+  postgresPassword: process.env.POSTGRES_PASSWORD || '',
+  postgresDatabase: process.env.POSTGRES_DATABASE || 'saki',
   k8sNamespace: process.env.K8S_NAMESPACE || 'saki-apps',
   k8sKubeconfigPath: process.env.K8S_KUBECONFIG_PATH || '',
 };

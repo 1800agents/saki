@@ -10,15 +10,13 @@ usage() {
 Build and push the control-plane image.
 
 Usage:
-  scripts/build-and-push.sh <repository> [tag]
+  scripts/build-and-push.sh [repository]
 
 Examples:
   scripts/build-and-push.sh registry.corgi-teeth.ts.net/saki/control-plane
-  scripts/build-and-push.sh registry.corgi-teeth.ts.net/saki/control-plane v0.1.0
 
 Environment overrides:
   IMAGE_REPOSITORY      Fallback repository if arg is omitted
-  IMAGE_TAG             Fallback tag if arg is omitted
   BUILD_CONTEXT         Docker build context (default: .)
   DOCKERFILE_PATH       Dockerfile path (default: Dockerfile)
   DOCKER_PLATFORM       If set, uses docker buildx with --platform and --push
@@ -27,22 +25,25 @@ USAGE
 }
 
 REPOSITORY="${1:-${IMAGE_REPOSITORY:-registry.corgi-teeth.ts.net/saki/control-plane}}"
-TAG="${2:-${IMAGE_TAG:-}}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-Dockerfile}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
+
+if [[ $# -gt 1 ]]; then
+  usage
+  exit 1
+fi
 
 if [[ -z "$REPOSITORY" ]]; then
   usage
   exit 1
 fi
 
-if [[ -z "$TAG" ]]; then
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    TAG="$(git rev-parse --short HEAD)"
-  else
-    TAG="$(date +%Y%m%d%H%M%S)"
-  fi
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  TAG="$(git rev-parse --short HEAD)"
+else
+  echo "Error: this script must run inside a Git repository to derive an image tag."
+  exit 1
 fi
 
 IMAGE="${REPOSITORY}:${TAG}"

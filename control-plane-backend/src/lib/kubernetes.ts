@@ -10,10 +10,47 @@ interface KubeConfigResolution {
   source: KubeAuthSource;
 }
 
+interface KubeBootstrapDiagnostics {
+  kubernetesServiceHost: string;
+  inClusterTokenPath: string;
+  inClusterTokenExists: boolean;
+  inClusterCredentialsDetected: boolean;
+  kubeconfigPath: string;
+  kubeconfigPathExists: boolean;
+}
+
 const IN_CLUSTER_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token';
 
 function hasInClusterCredentials(): boolean {
   return Boolean(process.env.KUBERNETES_SERVICE_HOST) && fs.existsSync(IN_CLUSTER_TOKEN_PATH);
+}
+
+function getKubeBootstrapDiagnostics(): KubeBootstrapDiagnostics {
+  const kubeconfigPath = config.k8sKubeconfigPath || '(unset)';
+  return {
+    kubernetesServiceHost: process.env.KUBERNETES_SERVICE_HOST || '(unset)',
+    inClusterTokenPath: IN_CLUSTER_TOKEN_PATH,
+    inClusterTokenExists: fs.existsSync(IN_CLUSTER_TOKEN_PATH),
+    inClusterCredentialsDetected: hasInClusterCredentials(),
+    kubeconfigPath,
+    kubeconfigPathExists: kubeconfigPath !== '(unset)' && fs.existsSync(kubeconfigPath),
+  };
+}
+
+function buildFailureHint(reason: string, diagnostics: KubeBootstrapDiagnostics): string {
+  if (!diagnostics.inClusterCredentialsDetected && diagnostics.kubeconfigPath === '(unset)') {
+    return 'Set K8S_KUBECONFIG_PATH when running outside Kubernetes.';
+  }
+
+  if (!diagnostics.inClusterCredentialsDetected && !diagnostics.kubeconfigPathExists) {
+    return `Kubeconfig file not found at ${diagnostics.kubeconfigPath}.`;
+  }
+
+  if (reason.includes('No active cluster')) {
+    return `Check kubeconfig current-context in ${diagnostics.kubeconfigPath}.`;
+  }
+
+  return 'Verify in-cluster service account access or kubeconfig current-context/cluster values.';
 }
 
 function loadFromKubeconfigPath(path: string): k8s.KubeConfig {
@@ -23,6 +60,24 @@ function loadFromKubeconfigPath(path: string): k8s.KubeConfig {
 
   const kubeConfig = new k8s.KubeConfig();
   kubeConfig.loadFromFile(path);
+
+  const currentContext = kubeConfig.getCurrentContext();
+  if (!currentContext) {
+    const contexts = kubeConfig
+      .getContexts()
+      .map((ctx) => ctx.name)
+      .join(', ');
+    throw new Error(
+      `Kubeconfig file has no current-context set: ${path}${contexts ? ` (available contexts: ${contexts})` : ''}`
+    );
+  }
+
+  if (!kubeConfig.getCurrentCluster()) {
+    throw new Error(
+      `Kubeconfig current-context "${currentContext}" does not resolve to an active cluster: ${path}`
+    );
+  }
+
   return kubeConfig;
 }
 
@@ -76,7 +131,16 @@ export class KubernetesDeployer {
       this.enabled = false;
       this.initError = error;
       const reason = error instanceof Error ? error.message : String(error);
-      console.warn(`Kubernetes client bootstrap failed (${reason}). Running in no-op mode.`);
+      const diagnostics = getKubeBootstrapDiagnostics();
+      const hint = buildFailureHint(reason, diagnostics);
+      console.warn(
+        `Kubernetes client bootstrap failed (${reason}). Running in no-op mode. ` +
+          `Diagnostics: service_host=${diagnostics.kubernetesServiceHost}, ` +
+          `token_path=${diagnostics.inClusterTokenPath}, token_exists=${diagnostics.inClusterTokenExists}, ` +
+          `incluster_detected=${diagnostics.inClusterCredentialsDetected}, ` +
+          `kubeconfig_path=${diagnostics.kubeconfigPath}, kubeconfig_exists=${diagnostics.kubeconfigPathExists}. ` +
+          `Hint: ${hint}`
+      );
     }
   }
 
