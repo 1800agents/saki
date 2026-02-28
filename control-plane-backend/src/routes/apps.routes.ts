@@ -50,10 +50,10 @@ export function buildAppsRouter(appService: AppService) {
     }
   });
 
-  router.get('/', (req, res, next) => {
+  router.get('/', async (req, res, next) => {
     try {
       const includeAll = req.query.all === 'true';
-      const response = appService.listApps({
+      const response = await appService.listApps({
         owner: req.auth.owner,
         includeAll,
         isAdmin: req.auth.isAdmin,
@@ -84,9 +84,9 @@ export function buildAppsRouter(appService: AppService) {
     }
   });
 
-  router.get('/:appId', (req, res, next) => {
+  router.get('/:appId', async (req, res, next) => {
     try {
-      const response = appService.getApp({
+      const response = await appService.getApp({
         owner: req.auth.owner,
         appId: req.params.appId,
       });

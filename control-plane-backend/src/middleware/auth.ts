@@ -22,10 +22,12 @@ export const requireSessionToken: RequestHandler = (req, _res, next) => {
     return next(new ApiError(401, 'invalid_session', 'Session token must be a valid UUID.'));
   }
 
+  const normalizedToken = token.toLowerCase();
+
   req.auth = {
     token,
-    owner: token,
-    isAdmin: config.adminTokens.has(token),
+    owner: normalizedToken,
+    isAdmin: config.adminTokens.has(normalizedToken),
   };
 
   return next();

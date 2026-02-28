@@ -1,6 +1,6 @@
 # control-plane
 
-Express.js + TypeScript scaffold for the Saki Control Plane API (v1 contract), based on:
+Express.js + TypeScript backend for the Saki Control Plane API (v1 contract), based on:
 
 - [`spec/SPEC.md`](../spec/SPEC.md)
 - [`spec/API.md`](../spec/API.md)
@@ -18,13 +18,13 @@ Express.js + TypeScript scaffold for the Saki Control Plane API (v1 contract), b
   - `GET /apps/:appId/logs`
 - `?token=<session_uuid>` auth middleware
 - Spec-shaped error model
-- In-memory app store with overwrite-by-name behavior
-- Kubernetes integration scaffold
-- Postgres schema provisioner scaffold
+- Kubernetes-backed app state with overwrite-by-name behavior
+- Kubernetes deployment/service/ingress lifecycle integration
+- Postgres schema provisioner with per-app `DATABASE_URL`
 
 ## Kubernetes libraries imported
 
-The scaffold imports and initializes [`@kubernetes/client-node`](https://www.npmjs.com/package/@kubernetes/client-node), including:
+The backend imports and initializes [`@kubernetes/client-node`](https://www.npmjs.com/package/@kubernetes/client-node), including:
 
 - `KubeConfig`
 - `AppsV1Api`
@@ -33,7 +33,7 @@ The scaffold imports and initializes [`@kubernetes/client-node`](https://www.npm
 - `BatchV1Api`
 - `KubernetesObjectApi`
 
-These are wired in `src/lib/kubernetes.ts` as no-op placeholders ready for real deploy/stop/delete/log integrations.
+These are wired in `src/lib/kubernetes.ts` to create/update/delete app resources and read pod logs.
 
 ## Quick start
 
@@ -57,6 +57,7 @@ See `.env.example`:
 - `CONTROL_PLANE_PORT`
 - `REGISTRY_HOST`
 - `APP_BASE_DOMAIN`
+- `APP_INGRESS_CLASS_NAME`
 - `DEFAULT_APP_TTL_HOURS`
 - `ADMIN_TOKENS`
 - `POSTGRES_URL`
@@ -116,7 +117,6 @@ control-plane/
       error-handler.ts
     routes/apps.routes.ts
     services/apps.service.ts
-    repositories/in-memory-store.ts
     lib/
       kubernetes.ts
       postgres.ts
@@ -128,5 +128,4 @@ control-plane/
 
 ## Notes
 
-- This is intentionally scaffold-first: Kubernetes and Postgres integrations are structured but not fully provisioned with cluster-specific manifests/migrations yet.
-- Apps are in-memory for now, so data resets when the process restarts.
+- App state is sourced from Kubernetes resources (Deployments/Services/Ingresses), not process memory.
