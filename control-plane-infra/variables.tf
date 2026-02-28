@@ -21,3 +21,10 @@ variable "tailscale_oauth_client_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "control_plane_image" {
+  description = "Docker image for the control plane backend."
+  type        = string
+  default     = "registry.corgi-teeth.ts.net/saki/control-plane:latest"
+}
+

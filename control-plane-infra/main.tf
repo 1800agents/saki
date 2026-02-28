@@ -53,3 +53,12 @@ module "registry" {
 
   depends_on = [module.tailscale]
 }
+
+module "control_plane" {
+  source = "./modules/control-plane"
+
+  image         = var.control_plane_image
+  postgres_host = module.db.postgres_host
+
+  depends_on = [module.base, module.db, module.tailscale]
+}

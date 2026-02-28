@@ -4,9 +4,10 @@ auth:
   secretKeys:
     adminPasswordKey: postgres-password
   enablePostgresUser: true
+  database: saki
 
 passwordUpdateJob:
-  enabled: true
+  enabled: false
 
 primary:
   persistence:

@@ -63,6 +63,10 @@ resource "kubernetes_secret" "secrets" {
     key => random_password.secret_values["${each.key}__${key}"].result
   }
 
+  lifecycle {
+    ignore_changes = [data]
+  }
+
   depends_on = [kubernetes_namespace.namespaces]
 }
 
@@ -76,3 +80,4 @@ output "secret_names" {
     key => secret.metadata[0].name
   }
 }
+
