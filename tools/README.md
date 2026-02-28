@@ -6,6 +6,14 @@ Agentic deploy tool used by coding agents (Codex / Claude Code).
 
 Expose a tool call (`saki_deploy_app`) that takes app metadata, builds from the Saki app template, pushes an image to the internal registry, and asks the Saki control plane to deploy it.
 
+## MCP Implementation
+
+This server uses the official Go MCP SDK:
+- `github.com/modelcontextprotocol/go-sdk/mcp`
+
+Transport:
+- Local stdio MCP server (`mcp.StdioTransport`)
+
 ## User Quickstart
 
 ### 1. Get your Saki control plane URL
