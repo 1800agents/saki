@@ -39,10 +39,12 @@ type PrepareAppRequest struct {
 
 // PrepareAppResponse is the response body from POST /apps/prepare.
 type PrepareAppResponse struct {
-	Repository  string    `json:"repository"`
-	PushToken   string    `json:"push_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	RequiredTag string    `json:"required_tag"`
+	Repository         string    `json:"repository"`
+	PushToken          string    `json:"push_token"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	RequiredTag        string    `json:"required_tag"`
+	TemplateRepository string    `json:"template_repository"`
+	TemplateRef        string    `json:"template_ref"`
 }
 
 // DeployAppRequest is the payload for POST /apps.
