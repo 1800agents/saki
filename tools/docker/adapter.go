@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
+
+	"github.com/1800agents/saki/tools/internal/apperrors"
 )
 
 // Logger receives structured log events from the Docker adapter.
@@ -67,6 +69,13 @@ func (e *CommandError) Unwrap() error {
 		return nil
 	}
 	return e.Err
+}
+
+func (e *CommandError) ErrorCode() apperrors.Code {
+	if e != nil && errors.Is(e.Err, context.DeadlineExceeded) {
+		return apperrors.CodeTimeout
+	}
+	return apperrors.CodeDocker
 }
 
 // NewAdapter creates a Docker CLI adapter with optional logger/runner overrides.

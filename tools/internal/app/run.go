@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/1800agents/saki/tools/internal/apperrors"
 	"github.com/1800agents/saki/tools/internal/config"
 	"github.com/1800agents/saki/tools/internal/logging"
 	"github.com/1800agents/saki/tools/internal/tool"
@@ -19,9 +20,17 @@ func Run(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	logger.Printf("starting in %s mode on %s", cfg.Mode, cfg.Addr)
+	logger.Info("tool starting", map[string]any{
+		"mode": cfg.Mode,
+		"addr": cfg.Addr,
+	})
 	if err := service.Run(ctx); err != nil && err != context.Canceled {
-		return err
+		wrapped := apperrors.Wrap(apperrors.CodeInternal, "run service", err)
+		logger.Error("tool stopped with error", map[string]any{
+			"code":  apperrors.CodeOf(wrapped),
+			"error": wrapped.Error(),
+		})
+		return wrapped
 	}
 	return nil
 }

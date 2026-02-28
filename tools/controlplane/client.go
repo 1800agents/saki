@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/1800agents/saki/tools/internal/apperrors"
 )
 
 const defaultRequestTimeout = 15 * time.Second
@@ -61,7 +63,7 @@ type DeployAppResponse struct {
 // APIError describes a structured error returned by the control plane.
 type APIError struct {
 	StatusCode int
-	Code       string
+	RemoteCode string
 	Message    string
 	Details    json.RawMessage
 }
@@ -70,10 +72,14 @@ func (e *APIError) Error() string {
 	if e == nil {
 		return ""
 	}
-	if e.Code == "" {
+	if e.RemoteCode == "" {
 		return fmt.Sprintf("control plane request failed with status %d: %s", e.StatusCode, e.Message)
 	}
-	return fmt.Sprintf("control plane error (%s): %s", e.Code, e.Message)
+	return fmt.Sprintf("control plane error (%s): %s", e.RemoteCode, e.Message)
+}
+
+func (e *APIError) ErrorCode() apperrors.Code {
+	return apperrors.CodeControlPlaneAPI
 }
 
 // RequestError represents transport-level failures, including timeouts.
@@ -98,6 +104,13 @@ func (e *RequestError) Unwrap() error {
 		return nil
 	}
 	return e.Err
+}
+
+func (e *RequestError) ErrorCode() apperrors.Code {
+	if e != nil && e.Timeout {
+		return apperrors.CodeTimeout
+	}
+	return apperrors.CodeControlPlane
 }
 
 // Option configures the control plane client.
@@ -125,12 +138,12 @@ func WithRequestTimeout(timeout time.Duration) Option {
 func NewClient(controlPlaneURL string, opts ...Option) (*Client, error) {
 	parsedURL, err := url.Parse(controlPlaneURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse control plane URL: %w", err)
+		return nil, apperrors.Wrap(apperrors.CodeInvalidInput, "parse control plane URL", err)
 	}
 
 	token := strings.TrimSpace(parsedURL.Query().Get("token"))
 	if token == "" {
-		return nil, fmt.Errorf("missing token in control plane URL")
+		return nil, apperrors.New(apperrors.CodeInvalidInput, "parse control plane URL", "missing token in control plane URL")
 	}
 
 	cleanURL := *parsedURL
@@ -168,7 +181,7 @@ func doJSON[TReq any, TResp any](ctx context.Context, c *Client, method, path st
 
 	requestBody, err := json.Marshal(payload)
 	if err != nil {
-		return zero, fmt.Errorf("marshal %s payload: %w", operation, err)
+		return zero, apperrors.Wrap(apperrors.CodeInternal, "marshal "+operation+" payload", err)
 	}
 
 	endpoint := c.endpointURL(path)
@@ -181,7 +194,7 @@ func doJSON[TReq any, TResp any](ctx context.Context, c *Client, method, path st
 
 	httpReq, err := http.NewRequestWithContext(ctxWithTimeout, method, endpoint.String(), bytes.NewReader(requestBody))
 	if err != nil {
-		return zero, fmt.Errorf("build %s request: %w", operation, err)
+		return zero, apperrors.Wrap(apperrors.CodeControlPlane, "build "+operation+" request", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
@@ -202,7 +215,7 @@ func doJSON[TReq any, TResp any](ctx context.Context, c *Client, method, path st
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return zero, fmt.Errorf("read %s response: %w", operation, err)
+		return zero, apperrors.Wrap(apperrors.CodeControlPlane, "read "+operation+" response", err)
 	}
 
 	if len(bytes.TrimSpace(body)) == 0 {
@@ -211,7 +224,7 @@ func doJSON[TReq any, TResp any](ctx context.Context, c *Client, method, path st
 
 	var out TResp
 	if err := json.Unmarshal(body, &out); err != nil {
-		return zero, fmt.Errorf("decode %s response: %w", operation, err)
+		return zero, apperrors.Wrap(apperrors.CodeControlPlane, "decode "+operation+" response", err)
 	}
 
 	return out, nil
@@ -251,7 +264,7 @@ func decodeAPIError(resp *http.Response) *APIError {
 	if err := json.Unmarshal(body, &envelope); err == nil && (envelope.Error.Code != "" || envelope.Error.Message != "") {
 		return &APIError{
 			StatusCode: resp.StatusCode,
-			Code:       envelope.Error.Code,
+			RemoteCode: envelope.Error.Code,
 			Message:    envelope.Error.Message,
 			Details:    envelope.Error.Details,
 		}
