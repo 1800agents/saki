@@ -46,11 +46,19 @@ go run ./cmd/saki-tools
 
 - `SAKI_TEMPLATE_REPOSITORY` (optional): fallback template repo if `/apps/prepare` does not return one.
 - `SAKI_TEMPLATE_REF` (optional): fallback branch/tag/commit if `/apps/prepare` does not return one.
+- `SAKI_DOCKER_REGISTRY` (optional): Docker registry endpoint used to construct the image repository for push.
+- `SAKI_REGISTRY_ONLY` (optional): when `1`/`true`, stop after `docker push` and skip `POST /apps`.
 
 Default template repository is:
 
 ```text
 https://github.com/1800agents/saki-app-template
+```
+
+Default Docker registry endpoint is:
+
+```text
+https://registry.corgi-teeth.ts.net/v2/
 ```
 
 ### MCP server logging
@@ -113,10 +121,10 @@ This implementation assumes:
 4. Clone template and write `.env` with only:
    - `NAME=<name>`
    - `DESCRIPTION=<description>`
-5. `docker login` using username `token` and `push_token` from prepare response.
+5. Build image name from registry endpoint (`SAKI_DOCKER_REGISTRY` or default), prepare repository path, and `required_tag`.
 6. `docker build` and `docker push`.
-7. Call `POST /apps`.
-8. Return deployment metadata.
+7. Call `POST /apps` (unless `SAKI_REGISTRY_ONLY` is enabled).
+8. Return deployment metadata (or registry-only result with `status: "pushed"`).
 
 ## Guardrails
 
