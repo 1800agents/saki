@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/1800agents/saki/tools/contracts"
@@ -14,7 +16,7 @@ import (
 
 const (
 	toolNameSakiDeployApp        = "saki_deploy_app"
-	toolDescriptionSakiDeployApp = "Build and deploy a Saki app from template to the internal control plane."
+	toolDescriptionSakiDeployApp = "Deploy a Saki app from conversation-provided app details. If any field is missing, ask follow-up questions in plain language instead of asking for JSON."
 )
 
 type Logger interface {
@@ -45,6 +47,7 @@ func NewServer(service deployService, logger Logger) *Server {
 	}, nil)
 
 	sdkmcp.AddTool(sdkServer, deployToolDefinition(), func(ctx context.Context, _ *sdkmcp.CallToolRequest, in contracts.DeployAppInput) (*sdkmcp.CallToolResult, contracts.DeployAppOutput, error) {
+		in = normalizeDeployInput(in)
 		logger.Info("tool call requested", map[string]any{
 			"tool": toolNameSakiDeployApp,
 		})
@@ -53,6 +56,14 @@ func NewServer(service deployService, logger Logger) *Server {
 			"description": in.Description,
 			"has_url":     strings.TrimSpace(in.SakiControlPlaneURL) != "",
 		})
+
+		if missing := missingDeployFields(in); len(missing) > 0 {
+			missingMessage := missingFieldsMessage(missing)
+			logger.Info("deploy input incomplete", map[string]any{
+				"missing_fields": missing,
+			})
+			return nil, contracts.DeployAppOutput{}, fmt.Errorf("%s", missingMessage)
+		}
 
 		output, err := service.DeployApp(ctx, in)
 		if err != nil {
@@ -119,14 +130,57 @@ func deployToolDefinition() *sdkmcp.Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"saki_control_plane_url": map[string]any{"type": "string"},
-				"name":                   map[string]any{"type": "string"},
-				"description":            map[string]any{"type": "string"},
+				"saki_control_plane_url": map[string]any{
+					"type":        "string",
+					"description": "Tokenized Saki control plane URL. Example: https://saki.internal/api?token=<uuid>.",
+					"minLength":   1,
+				},
+				"name": map[string]any{
+					"type":        "string",
+					"description": "DNS-safe app name (lowercase letters, numbers, hyphens; max 63 chars). Example: team-dashboard.",
+					"pattern":     "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+					"maxLength":   63,
+				},
+				"description": map[string]any{
+					"type":        "string",
+					"description": "Short human-readable app purpose (max 300 chars). Example: Internal ops dashboard for on-call rotation.",
+					"minLength":   1,
+					"maxLength":   300,
+				},
 			},
-			"required":             []string{"saki_control_plane_url", "name", "description"},
 			"additionalProperties": false,
 		},
 	}
+}
+
+func normalizeDeployInput(in contracts.DeployAppInput) contracts.DeployAppInput {
+	in.SakiControlPlaneURL = strings.TrimSpace(in.SakiControlPlaneURL)
+	in.Name = strings.TrimSpace(in.Name)
+	in.Description = strings.TrimSpace(in.Description)
+	return in
+}
+
+func missingDeployFields(in contracts.DeployAppInput) []string {
+	missing := make([]string, 0, 3)
+	if in.SakiControlPlaneURL == "" {
+		missing = append(missing, "saki_control_plane_url")
+	}
+	if in.Name == "" {
+		missing = append(missing, "name")
+	}
+	if in.Description == "" {
+		missing = append(missing, "description")
+	}
+	return missing
+}
+
+func missingFieldsMessage(fields []string) string {
+	fields = append([]string(nil), fields...)
+	slices.Sort(fields)
+	return fmt.Sprintf(
+		"missing required deployment fields: %s. Ask the user for the missing values in plain language and retry saki_deploy_app.",
+		strings.Join(fields, ", "),
+	)
 }
 
 func envEnabled(key string) bool {
