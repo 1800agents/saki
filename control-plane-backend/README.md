@@ -61,24 +61,14 @@ See `.env.example`:
 - `ADMIN_TOKENS`
 - `POSTGRES_URL`
 - `K8S_NAMESPACE`
-- `K8S_AUTH_MODE`
 - `K8S_KUBECONFIG_PATH`
-- `K8S_CONTEXT`
-- `K8S_API_SERVER`
-- `K8S_TOKEN`
-- `K8S_CA_FILE`
-- `K8S_CA_DATA`
-- `K8S_SKIP_TLS_VERIFY`
 
 ## Kubernetes authentication
 
-`src/lib/kubernetes.ts` supports both deployment targets you mentioned.
+`src/lib/kubernetes.ts` uses a strict two-path setup:
 
-- Local (outside cluster): default `K8S_AUTH_MODE=auto` tries `K8S_KUBECONFIG_PATH` (if set), then standard kubeconfig resolution (`$KUBECONFIG` or `~/.kube/config`).
-- Pod (inside cluster): `K8S_AUTH_MODE=auto` detects service account credentials and uses in-cluster auth.
-- Explicit in-cluster: set `K8S_AUTH_MODE=incluster`.
-- Explicit kubeconfig: set `K8S_AUTH_MODE=kubeconfig` and optional `K8S_KUBECONFIG_PATH`, `K8S_CONTEXT`.
-- Explicit token auth: set `K8S_AUTH_MODE=token` with `K8S_API_SERVER` and `K8S_TOKEN` (optionally `K8S_CA_FILE` or `K8S_CA_DATA`).
+- Inside Kubernetes: service account credentials are auto-detected and in-cluster auth is used (no extra auth env vars).
+- Outside Kubernetes: `K8S_KUBECONFIG_PATH` is required and must point to a kubeconfig file.
 
 On startup, the service logs which auth source was selected.
 

@@ -3,7 +3,7 @@ import * as k8s from '@kubernetes/client-node';
 import { config } from '../config/env';
 import type { AppRecord, LogsPage } from '../types/app';
 
-type KubeAuthSource = 'incluster' | 'kubeconfig' | 'token' | 'default';
+type KubeAuthSource = 'incluster' | 'kubeconfig';
 
 interface KubeConfigResolution {
   kubeConfig: k8s.KubeConfig;
@@ -16,19 +16,6 @@ function hasInClusterCredentials(): boolean {
   return Boolean(process.env.KUBERNETES_SERVICE_HOST) && fs.existsSync(IN_CLUSTER_TOKEN_PATH);
 }
 
-function applyContextIfPresent(kubeConfig: k8s.KubeConfig): void {
-  if (!config.k8sContext) {
-    return;
-  }
-
-  const contextExists = kubeConfig.getContexts().some((ctx) => ctx.name === config.k8sContext);
-  if (!contextExists) {
-    throw new Error(`Kubernetes context not found: ${config.k8sContext}`);
-  }
-
-  kubeConfig.setCurrentContext(config.k8sContext);
-}
-
 function loadFromKubeconfigPath(path: string): k8s.KubeConfig {
   if (!fs.existsSync(path)) {
     throw new Error(`Kubeconfig file does not exist: ${path}`);
@@ -36,105 +23,26 @@ function loadFromKubeconfigPath(path: string): k8s.KubeConfig {
 
   const kubeConfig = new k8s.KubeConfig();
   kubeConfig.loadFromFile(path);
-  applyContextIfPresent(kubeConfig);
-  return kubeConfig;
-}
-
-function loadFromTokenAuth(): k8s.KubeConfig {
-  if (!config.k8sApiServer) {
-    throw new Error('K8S_API_SERVER is required when K8S_AUTH_MODE=token');
-  }
-
-  if (!config.k8sToken) {
-    throw new Error('K8S_TOKEN is required when K8S_AUTH_MODE=token');
-  }
-
-  const cluster: {
-    name: string;
-    server: string;
-    skipTLSVerify: boolean;
-    caFile?: string;
-    caData?: string;
-  } = {
-    name: 'saki-control-plane',
-    server: config.k8sApiServer,
-    skipTLSVerify: config.k8sSkipTlsVerify,
-  };
-
-  if (config.k8sCaFile) {
-    cluster.caFile = config.k8sCaFile;
-  } else if (config.k8sCaData) {
-    cluster.caData = config.k8sCaData;
-  }
-
-  const kubeConfig = new k8s.KubeConfig();
-  kubeConfig.loadFromOptions({
-    clusters: [cluster],
-    users: [{ name: 'saki-control-plane', token: config.k8sToken }],
-    contexts: [
-      {
-        name: 'saki-control-plane',
-        user: 'saki-control-plane',
-        cluster: 'saki-control-plane',
-      },
-    ],
-    currentContext: 'saki-control-plane',
-  });
-
   return kubeConfig;
 }
 
 function resolveKubeConfig(): KubeConfigResolution {
-  switch (config.k8sAuthMode) {
-    case 'incluster': {
-      const kubeConfig = new k8s.KubeConfig();
-      kubeConfig.loadFromCluster();
-      return { kubeConfig, source: 'incluster' };
-    }
-
-    case 'kubeconfig': {
-      if (config.k8sKubeconfigPath) {
-        return {
-          kubeConfig: loadFromKubeconfigPath(config.k8sKubeconfigPath),
-          source: 'kubeconfig',
-        };
-      }
-
-      const kubeConfig = new k8s.KubeConfig();
-      kubeConfig.loadFromDefault();
-      applyContextIfPresent(kubeConfig);
-      return { kubeConfig, source: 'default' };
-    }
-
-    case 'token': {
-      return { kubeConfig: loadFromTokenAuth(), source: 'token' };
-    }
-
-    case 'auto':
-    default: {
-      if (hasInClusterCredentials()) {
-        const kubeConfig = new k8s.KubeConfig();
-        kubeConfig.loadFromCluster();
-        return { kubeConfig, source: 'incluster' };
-      }
-
-      if (config.k8sApiServer && config.k8sToken) {
-        return { kubeConfig: loadFromTokenAuth(), source: 'token' };
-      }
-
-      if (config.k8sKubeconfigPath) {
-        return {
-          kubeConfig: loadFromKubeconfigPath(config.k8sKubeconfigPath),
-          source: 'kubeconfig',
-        };
-      }
-
-      const kubeConfig = new k8s.KubeConfig();
-      kubeConfig.loadFromDefault();
-      applyContextIfPresent(kubeConfig);
-      return { kubeConfig, source: 'default' };
-    }
+  if (hasInClusterCredentials()) {
+    const kubeConfig = new k8s.KubeConfig();
+    kubeConfig.loadFromCluster();
+    return { kubeConfig, source: 'incluster' };
   }
+
+  if (!config.k8sKubeconfigPath) {
+    throw new Error(
+      'K8S_KUBECONFIG_PATH is required when running outside Kubernetes (in-cluster credentials not detected)'
+    );
+  }
+
+  return {
+    kubeConfig: loadFromKubeconfigPath(config.k8sKubeconfigPath),
+    source: 'kubeconfig',
+  };
 }
 
 export class KubernetesDeployer {
