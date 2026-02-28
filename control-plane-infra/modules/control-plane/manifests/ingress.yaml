@@ -5,6 +5,7 @@ metadata:
   namespace: ${namespace}
   annotations:
     tailscale.com/hostname: ${tailscale_hostname}
+    tailscale.com/tags: "tag:saki"
 spec:
   ingressClassName: tailscale
   rules:
