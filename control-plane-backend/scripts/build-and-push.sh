@@ -13,8 +13,8 @@ Usage:
   scripts/build-and-push.sh <repository> [tag]
 
 Examples:
-  scripts/build-and-push.sh registry.internal/saki/control-plane
-  scripts/build-and-push.sh registry.internal/saki/control-plane v0.1.0
+  scripts/build-and-push.sh registry.corgi-teeth.ts.net/saki/control-plane
+  scripts/build-and-push.sh registry.corgi-teeth.ts.net/saki/control-plane v0.1.0
 
 Environment overrides:
   IMAGE_REPOSITORY      Fallback repository if arg is omitted
@@ -22,15 +22,15 @@ Environment overrides:
   BUILD_CONTEXT         Docker build context (default: .)
   DOCKERFILE_PATH       Dockerfile path (default: Dockerfile)
   DOCKER_PLATFORM       If set, uses docker buildx with --platform and --push
-  PUSH_LATEST=1         Also push :latest tag
+  PUSH_LATEST=0         Skip pushing :latest tag (pushed by default)
 USAGE
 }
 
-REPOSITORY="${1:-${IMAGE_REPOSITORY:-}}"
+REPOSITORY="${1:-${IMAGE_REPOSITORY:-registry.corgi-teeth.ts.net/saki/control-plane}}"
 TAG="${2:-${IMAGE_TAG:-}}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-Dockerfile}"
-DOCKER_PLATFORM="${DOCKER_PLATFORM:-}"
+DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 
 if [[ -z "$REPOSITORY" ]]; then
   usage
@@ -61,7 +61,7 @@ else
   docker push "$IMAGE"
 fi
 
-if [[ "${PUSH_LATEST:-0}" == "1" ]]; then
+if [[ "${PUSH_LATEST:-1}" != "0" ]]; then
   LATEST_IMAGE="${REPOSITORY}:latest"
   echo "Tagging and pushing ${LATEST_IMAGE}"
   docker tag "$IMAGE" "$LATEST_IMAGE"
