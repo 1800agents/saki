@@ -18,6 +18,13 @@ https://saki.internal/api?token=<your-session-uuid>
 
 Keep this value ready. You will paste it as `saki_control_plane_url` when calling the tool.
 
+Template source default:
+- `https://github.com/1800agents/saki-app-template`
+
+Optional override:
+- Set `SAKI_TEMPLATE_REPOSITORY` to use a different template repository.
+- Set `SAKI_TEMPLATE_REF` to pin a branch/tag/commit.
+
 ### 2. Add this tool server to Codex
 
 In Codex, add this project as a local MCP server:

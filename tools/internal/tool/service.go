@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	templateRepoEnv = "SAKI_TEMPLATE_REPOSITORY"
-	templateRefEnv  = "SAKI_TEMPLATE_REF"
-	tokenUser       = "token"
+	templateRepoEnv           = "SAKI_TEMPLATE_REPOSITORY"
+	templateRefEnv            = "SAKI_TEMPLATE_REF"
+	defaultTemplateRepository = "https://github.com/1800agents/saki-app-template"
+	tokenUser                 = "token"
 )
 
 type Logger interface {
@@ -108,14 +109,8 @@ func (s *Service) DeployApp(ctx context.Context, in contracts.DeployAppInput) (c
 		return zero, err
 	}
 
-	templateRepository := strings.TrimSpace(prepareRes.TemplateRepository)
-	if templateRepository == "" {
-		templateRepository = strings.TrimSpace(s.templateRepoValue())
-	}
-	templateRef := strings.TrimSpace(prepareRes.TemplateRef)
-	if templateRef == "" {
-		templateRef = strings.TrimSpace(s.templateRefValue())
-	}
+	templateRepository := resolveTemplateRepository(prepareRes.TemplateRepository, s.templateRepoValue())
+	templateRef := firstNonEmpty(prepareRes.TemplateRef, s.templateRefValue())
 
 	workDir, err := s.makeTempDir()
 	if err != nil {
@@ -217,4 +212,18 @@ func registryHost(repository string) string {
 		return repo[:slash]
 	}
 	return repo
+}
+
+func resolveTemplateRepository(prepareRepository, envRepository string) string {
+	return firstNonEmpty(prepareRepository, envRepository, defaultTemplateRepository)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
