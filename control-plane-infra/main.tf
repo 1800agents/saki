@@ -47,3 +47,9 @@ module "db" {
 
   postgres_secret_name = module.base.secret_names["postgres-secret"]
 }
+
+module "registry" {
+  source = "./modules/registry"
+
+  depends_on = [module.tailscale]
+}

@@ -17,8 +17,7 @@ locals {
   ]
 
   secrets = {
-    tailscale-secret = { namespace = "tailscale", name = "operator-oauth", keys = ["client_id", "client_secret"] }
-    postgres-secret  = { namespace = "db", name = "postgres-secret", keys = ["postgres-password"] }
+    postgres-secret = { namespace = "db", name = "postgres-secret", keys = ["postgres-password"] }
   }
 
   # flatten secrets x keys into a map keyed by "secret-key__field"
