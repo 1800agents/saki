@@ -10,6 +10,7 @@ func TestDeployAppInputValidate_Success(t *testing.T) {
 		SakiControlPlaneURL: "https://saki.internal?token=11111111-1111-1111-1111-111111111111",
 		Name:                "my-app-1",
 		Description:         "internal app",
+		AppDir:              "/tmp/my-app",
 	}
 
 	if err := in.Validate(); err != nil {
@@ -35,6 +36,7 @@ func TestDeployAppInputValidate_InvalidName(t *testing.T) {
 			in := DeployAppInput{
 				Name:        tt.value,
 				Description: "valid description",
+				AppDir:      "/tmp/my-app",
 			}
 
 			if err := in.Validate(); err == nil {
@@ -59,11 +61,24 @@ func TestDeployAppInputValidate_InvalidDescription(t *testing.T) {
 			in := DeployAppInput{
 				Name:        "valid-app",
 				Description: tt.value,
+				AppDir:      "/tmp/my-app",
 			}
 
 			if err := in.Validate(); err == nil {
 				t.Fatalf("expected validation error for description")
 			}
 		})
+	}
+}
+
+func TestDeployAppInputValidate_InvalidAppDir(t *testing.T) {
+	in := DeployAppInput{
+		Name:        "valid-app",
+		Description: "valid description",
+		AppDir:      "  ",
+	}
+
+	if err := in.Validate(); err == nil {
+		t.Fatalf("expected validation error for app_dir")
 	}
 }

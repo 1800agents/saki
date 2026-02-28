@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/1800agents/saki/tools/contracts"
@@ -12,18 +13,16 @@ import (
 	"github.com/1800agents/saki/tools/docker"
 	"github.com/1800agents/saki/tools/internal/apperrors"
 	"github.com/1800agents/saki/tools/internal/logging"
-	tooltemplate "github.com/1800agents/saki/tools/internal/template"
 )
 
 const (
-	controlPlaneURLEnv        = "SAKI_CONTROL_PLANE_URL"
-	templateRepoEnv           = "SAKI_TEMPLATE_REPOSITORY"
-	templateRefEnv            = "SAKI_TEMPLATE_REF"
-	dockerRegistryEnv         = "SAKI_DOCKER_REGISTRY"
-	registryOnlyEnv           = "SAKI_REGISTRY_ONLY"
-	defaultTemplateRepository = "https://github.com/1800agents/saki-app-template"
-	defaultDockerRegistry     = "https://registry.corgi-teeth.ts.net/v2/"
+	controlPlaneURLEnv    = "SAKI_CONTROL_PLANE_URL"
+	dockerRegistryEnv     = "SAKI_DOCKER_REGISTRY"
+	registryOnlyEnv       = "SAKI_REGISTRY_ONLY"
+	defaultDockerRegistry = "https://registry.corgi-teeth.ts.net/v2/"
 )
+
+var sessionLikeIDPattern = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{32}`)
 
 type Logger interface {
 	Info(msg string, fields map[string]any)
@@ -48,12 +47,6 @@ type Service struct {
 	newControlPlane      controlPlaneFactory
 	newDockerClient      func(logger Logger) dockerClient
 	resolveGitCommit     func(ctx context.Context) (string, error)
-	makeTempDir          func() (string, error)
-	removeAll            func(path string) error
-	cloneFromPrepare     func(ctx context.Context, prepare tooltemplate.PrepareResponse, destinationDir string) error
-	writeEnv             func(appDir, name, description string) error
-	templateRepoValue    func() string
-	templateRefValue     func() string
 	dockerRegistryValue  func() string
 	registryOnlyValue    func() string
 	controlPlaneURLValue func() string
@@ -66,15 +59,7 @@ func NewService() *Service {
 		newDockerClient: func(logger Logger) dockerClient {
 			return docker.NewAdapter(logger, nil)
 		},
-		resolveGitCommit: resolveGitCommit,
-		makeTempDir: func() (string, error) {
-			return os.MkdirTemp("", "saki-template-*")
-		},
-		removeAll:            os.RemoveAll,
-		cloneFromPrepare:     tooltemplate.CloneFromPrepare,
-		writeEnv:             tooltemplate.WriteEnv,
-		templateRepoValue:    func() string { return os.Getenv(templateRepoEnv) },
-		templateRefValue:     func() string { return os.Getenv(templateRefEnv) },
+		resolveGitCommit:     resolveGitCommit,
 		dockerRegistryValue:  func() string { return os.Getenv(dockerRegistryEnv) },
 		registryOnlyValue:    func() string { return os.Getenv(registryOnlyEnv) },
 		controlPlaneURLValue: func() string { return os.Getenv(controlPlaneURLEnv) },
@@ -130,40 +115,41 @@ func (s *Service) DeployApp(ctx context.Context, in contracts.DeployAppInput) (c
 		return zero, err
 	}
 
-	templateRepository := resolveTemplateRepository(prepareRes.TemplateRepository, s.templateRepoValue())
-	templateRef := firstNonEmpty(prepareRes.TemplateRef, s.templateRefValue())
-
-	workDir, err := s.makeTempDir()
+	appDir, err := resolveAppDir(in.AppDir)
 	if err != nil {
-		return zero, apperrors.Wrap(apperrors.CodeInternal, "create temp workdir", err)
-	}
-	defer func() {
-		if rmErr := s.removeAll(workDir); rmErr != nil {
-			s.logger.Error("failed to clean temp workdir", map[string]any{
-				"error":   rmErr.Error(),
-				"workdir": workDir,
-			})
-		}
-	}()
-
-	if err := s.cloneFromPrepare(ctx, tooltemplate.PrepareResponse{
-		TemplateRepository: templateRepository,
-		TemplateRef:        templateRef,
-	}, workDir); err != nil {
 		return zero, err
 	}
 
-	if err := s.writeEnv(workDir, in.Name, in.Description); err != nil {
-		return zero, err
-	}
-
+	s.logger.Info("docker build starting", map[string]any{
+		"app_dir": appDir,
+		"image":   image,
+	})
 	dockerClient := s.newDockerClient(s.logger)
-	if err := dockerClient.Build(ctx, workDir, image); err != nil {
+	if err := dockerClient.Build(ctx, appDir, image); err != nil {
+		s.logger.Error("docker build failed", map[string]any{
+			"app_dir": appDir,
+			"image":   image,
+			"error":   err.Error(),
+		})
 		return zero, err
 	}
+	s.logger.Info("docker build completed", map[string]any{
+		"app_dir": appDir,
+		"image":   image,
+	})
+	s.logger.Info("docker push starting", map[string]any{
+		"image": image,
+	})
 	if err := dockerClient.Push(ctx, image); err != nil {
+		s.logger.Error("docker push failed", map[string]any{
+			"image": image,
+			"error": err.Error(),
+		})
 		return zero, err
 	}
+	s.logger.Info("docker push completed", map[string]any{
+		"image": image,
+	})
 
 	if envEnabled(envValue(s.registryOnlyValue)) {
 		return contracts.DeployAppOutput{
@@ -223,6 +209,23 @@ func buildImageName(repository, requiredTag string) (string, error) {
 	return repo + ":" + tag, nil
 }
 
+func resolveAppDir(appDir string) (string, error) {
+	dir := strings.TrimSpace(appDir)
+	if dir == "" {
+		return "", apperrors.New(apperrors.CodeInvalidInput, "resolve app directory", "app_dir is required")
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.CodeInvalidInput, "resolve app directory", fmt.Errorf("stat app_dir %q: %w", dir, err))
+	}
+	if !info.IsDir() {
+		return "", apperrors.New(apperrors.CodeInvalidInput, "resolve app directory", "app_dir must be a directory")
+	}
+
+	return dir, nil
+}
+
 func resolveDockerRegistry(envRegistry string) string {
 	return firstNonEmpty(envRegistry, defaultDockerRegistry)
 }
@@ -231,7 +234,7 @@ func resolveImageRepository(prepareRepository, registry string) string {
 	repository := strings.TrimSpace(prepareRepository)
 	normalizedRegistry := normalizeRegistryForImage(registry)
 
-	if repository == "" || normalizedRegistry == "" {
+	if repository == "" {
 		return repository
 	}
 
@@ -250,14 +253,50 @@ func resolveImageRepository(prepareRepository, registry string) string {
 		hasHost = firstSegment == "localhost" || strings.Contains(firstSegment, ".") || strings.Contains(firstSegment, ":")
 	}
 
+	pathPart := repository
 	if hasHost {
 		if slash := strings.IndexByte(repository, '/'); slash >= 0 {
-			return normalizedRegistry + "/" + repository[slash+1:]
+			pathPart = repository[slash+1:]
 		}
-		return normalizedRegistry + "/" + repository
 	}
 
-	return normalizedRegistry + "/" + repository
+	pathPart = sanitizeRepositoryPath(pathPart)
+	if pathPart == "" {
+		pathPart = repository
+	}
+
+	if normalizedRegistry == "" {
+		if hasHost {
+			if slash := strings.IndexByte(repository, '/'); slash >= 0 {
+				return repository[:slash+1] + pathPart
+			}
+		}
+		return pathPart
+	}
+
+	return normalizedRegistry + "/" + pathPart
+}
+
+func sanitizeRepositoryPath(path string) string {
+	parts := strings.Split(path, "/")
+	out := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		cleaned := strings.TrimSpace(part)
+		if cleaned == "" {
+			continue
+		}
+
+		cleaned = sessionLikeIDPattern.ReplaceAllString(cleaned, "")
+		cleaned = strings.Trim(cleaned, "-_")
+		if cleaned == "" {
+			continue
+		}
+
+		out = append(out, cleaned)
+	}
+
+	return strings.Join(out, "/")
 }
 
 func normalizeRegistryForImage(registry string) string {
@@ -274,10 +313,6 @@ func normalizeRegistryForImage(registry string) string {
 	value = strings.TrimRight(value, "/")
 	value = strings.TrimSuffix(value, "/v2")
 	return strings.TrimRight(value, "/")
-}
-
-func resolveTemplateRepository(prepareRepository, envRepository string) string {
-	return firstNonEmpty(prepareRepository, envRepository, defaultTemplateRepository)
 }
 
 func resolveControlPlaneURL(inputURL, envURL string) (string, error) {

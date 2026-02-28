@@ -4,7 +4,7 @@ Agentic deploy tool used by coding agents (Codex / Claude Code).
 
 ## Purpose
 
-Expose `saki_deploy_app`: build from the Saki app template, push to Saki internal registry, then deploy via Saki control plane.
+Expose `saki_deploy_app`: build and deploy a local app directory prepared by the calling agent.
 
 ## Prerequisites
 
@@ -44,16 +44,8 @@ go run ./cmd/saki-tools
 
 ### Deploy workflow
 
-- `SAKI_TEMPLATE_REPOSITORY` (optional): fallback template repo if `/apps/prepare` does not return one.
-- `SAKI_TEMPLATE_REF` (optional): fallback branch/tag/commit if `/apps/prepare` does not return one.
 - `SAKI_DOCKER_REGISTRY` (optional): Docker registry endpoint used to construct the image repository for push.
 - `SAKI_REGISTRY_ONLY` (optional): when `1`/`true`, stop after `docker push` and skip `POST /apps`.
-
-Default template repository is:
-
-```text
-https://github.com/1800agents/saki-app-template
-```
 
 Default Docker registry endpoint is:
 
@@ -63,8 +55,10 @@ https://registry.corgi-teeth.ts.net/v2/
 
 ### MCP server logging
 
-- `SAKI_TOOLS_MCP_DEBUG` (optional): enable debug-mode flag in logs (`1`/`true`).
+- `SAKI_TOOLS_MCP_DEBUG` (optional): debug mode flag (`1`/`true`); defaults to enabled when unset.
 - `SAKI_TOOLS_MCP_RAW_LOG` (optional): enable raw MCP transport logging to stderr (`1`/`true`).
+- `SAKI_TOOLS_DEBUG` (optional): enable/disable debug log fan-out (`1`/`true` or `0`/`false`); defaults to enabled.
+- `SAKI_TOOLS_LOG_PATH` (optional): debug log file path (default `/tmp/saki.log`).
 
 ### Non-MCP process config (`cmd/saki-tools`)
 
@@ -81,7 +75,8 @@ Input:
 {
   "saki_control_plane_url": "https://<control-plane-host>/api?token=<session-uuid>",
   "name": "my-app",
-  "description": "Internal test app"
+  "description": "Internal test app",
+  "app_dir": "/absolute/or/relative/path/to/local/app"
 }
 ```
 
@@ -105,9 +100,7 @@ This implementation assumes:
 - Tool forwards the same token to control plane API calls.
 - `POST /apps/prepare` returns:
   - `repository` (registry repo path)
-  - `push_token` (short-lived Docker push credential)
   - `required_tag` (required image tag)
-  - optional `template_repository`, `template_ref`
 - Tool builds and pushes `repository:required_tag`.
 - Tool deploys via `POST /apps` with `{ name, description, image }`.
 - `POST /apps` behaves as create-or-update by `(owner, name)`.
@@ -116,13 +109,12 @@ This implementation assumes:
 ## Deploy Flow
 
 1. Validate input (`name`, `description`, `saki_control_plane_url`).
-2. Resolve current git commit (`git rev-parse HEAD`).
-3. Call `POST /apps/prepare`.
-4. Clone template and write `.env` with only:
-   - `NAME=<name>`
-   - `DESCRIPTION=<description>`
+2. Ensure the calling agent has already prepared source code in `app_dir` (for example by cloning `https://github.com/1800agents/saki-app-template` and customizing it).
+3. Resolve current git commit (`git rev-parse HEAD`).
+4. Call `POST /apps/prepare`.
 5. Build image name from registry endpoint (`SAKI_DOCKER_REGISTRY` or default), prepare repository path, and `required_tag`.
-6. `docker build` and `docker push`.
+   UUID/session-like fragments in the prepare repository path are stripped to keep registry paths stable.
+6. `docker build` and `docker push` using `app_dir` as build context.
 7. Call `POST /apps` (unless `SAKI_REGISTRY_ONLY` is enabled).
 8. Return deployment metadata (or registry-only result with `status: "pushed"`).
 

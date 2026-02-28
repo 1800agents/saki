@@ -18,6 +18,8 @@ type DeployAppInput struct {
 	SakiControlPlaneURL string `json:"saki_control_plane_url"`
 	Name                string `json:"name"`
 	Description         string `json:"description"`
+	// AppDir is the local directory containing the app source to build.
+	AppDir string `json:"app_dir"`
 }
 
 // DeployAppOutput is the response payload for the saki_deploy_app tool call.
@@ -36,6 +38,9 @@ func (in DeployAppInput) Validate() error {
 
 	if err := validateDescription(in.Description); err != nil {
 		return fmt.Errorf("invalid description: %w", err)
+	}
+	if err := validateAppDir(in.AppDir); err != nil {
+		return fmt.Errorf("invalid app_dir: %w", err)
 	}
 
 	return nil
@@ -67,5 +72,12 @@ func validateDescription(description string) error {
 		return fmt.Errorf("must be %d characters or fewer", maxDescriptionLength)
 	}
 
+	return nil
+}
+
+func validateAppDir(appDir string) error {
+	if strings.TrimSpace(appDir) == "" {
+		return fmt.Errorf("must not be empty")
+	}
 	return nil
 }

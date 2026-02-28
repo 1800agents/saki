@@ -3,23 +3,20 @@ package tool
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/1800agents/saki/tools/contracts"
 	"github.com/1800agents/saki/tools/controlplane"
 	"github.com/1800agents/saki/tools/internal/apperrors"
-	tooltemplate "github.com/1800agents/saki/tools/internal/template"
 )
 
 func TestDeployApp_HappyPath(t *testing.T) {
 	cp := &stubControlPlane{
 		prepareRes: controlplane.PrepareAppResponse{
-			Repository:         "registry.internal/owner/my-app",
-			PushToken:          "push-token",
-			RequiredTag:        "abc1234",
-			TemplateRepository: "https://example.com/template.git",
-			TemplateRef:        "main",
+			Repository:  "registry.internal/owner/my-app",
+			RequiredTag: "abc1234",
 		},
 		deployRes: controlplane.DeployAppResponse{
 			AppID:        "app_123",
@@ -29,46 +26,21 @@ func TestDeployApp_HappyPath(t *testing.T) {
 		},
 	}
 	dockerStub := &stubDockerClient{}
-	tempDir := filepath.Join(t.TempDir(), "work")
-
-	var cloned tooltemplate.PrepareResponse
-	var cloneDir string
-	var wroteEnv struct {
-		dir         string
-		name        string
-		description string
-	}
-	var removedPath string
+	appDir := t.TempDir()
 
 	svc := &Service{
-		newControlPlane:  func(string) (controlPlaneClient, error) { return cp, nil },
-		newDockerClient:  func(Logger) dockerClient { return dockerStub },
-		resolveGitCommit: func(context.Context) (string, error) { return "0123456789abcdef", nil },
-		makeTempDir:      func() (string, error) { return tempDir, nil },
-		removeAll: func(path string) error {
-			removedPath = path
-			return nil
-		},
-		cloneFromPrepare: func(_ context.Context, prepare tooltemplate.PrepareResponse, destinationDir string) error {
-			cloned = prepare
-			cloneDir = destinationDir
-			return nil
-		},
-		writeEnv: func(appDir, name, description string) error {
-			wroteEnv.dir = appDir
-			wroteEnv.name = name
-			wroteEnv.description = description
-			return nil
-		},
-		templateRepoValue: func() string { return "https://env.example/template.git" },
-		templateRefValue:  func() string { return "env-ref" },
-		logger:            &noopLogger{},
+		newControlPlane:     func(string) (controlPlaneClient, error) { return cp, nil },
+		newDockerClient:     func(Logger) dockerClient { return dockerStub },
+		resolveGitCommit:    func(context.Context) (string, error) { return "0123456789abcdef", nil },
+		dockerRegistryValue: func() string { return "" },
+		logger:              &noopLogger{},
 	}
 
 	out, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
 		SakiControlPlaneURL: "https://cp.internal?token=test-token",
 		Name:                "my-app",
 		Description:         "internal app",
+		AppDir:              appDir,
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -81,18 +53,7 @@ func TestDeployApp_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected prepare request: %+v", cp.prepareReqs[0])
 	}
 
-	if cloneDir != tempDir {
-		t.Fatalf("expected clone destination %q, got %q", tempDir, cloneDir)
-	}
-	if cloned.TemplateRepository != "https://example.com/template.git" || cloned.TemplateRef != "main" {
-		t.Fatalf("unexpected clone source: %+v", cloned)
-	}
-
-	if wroteEnv.dir != tempDir || wroteEnv.name != "my-app" || wroteEnv.description != "internal app" {
-		t.Fatalf("unexpected .env write params: %+v", wroteEnv)
-	}
-
-	if dockerStub.buildDir != tempDir || dockerStub.image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
+	if dockerStub.buildDir != appDir || dockerStub.image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("unexpected docker build params: dir=%q image=%q", dockerStub.buildDir, dockerStub.image)
 	}
 	if dockerStub.pushImage != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
@@ -104,10 +65,6 @@ func TestDeployApp_HappyPath(t *testing.T) {
 	}
 	if cp.deployReqs[0].Image != "registry.corgi-teeth.ts.net/owner/my-app:abc1234" {
 		t.Fatalf("unexpected deploy image: %q", cp.deployReqs[0].Image)
-	}
-
-	if removedPath != tempDir {
-		t.Fatalf("expected temp dir cleanup for %q, got %q", tempDir, removedPath)
 	}
 
 	if out.AppID != "app_123" || out.DeploymentID != "dep_123" || out.URL != "https://my-app.saki.internal" || out.Status != "deploying" {
@@ -123,6 +80,7 @@ func TestDeployApp_ValidationFailure(t *testing.T) {
 	_, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
 		Name:        "INVALID_NAME",
 		Description: "internal app",
+		AppDir:      "/tmp/app",
 	})
 	if err == nil {
 		t.Fatal("expected validation error")
@@ -139,13 +97,13 @@ func TestDeployApp_StopsOnPrepareFailure(t *testing.T) {
 	svc := &Service{
 		newControlPlane:  func(string) (controlPlaneClient, error) { return cp, nil },
 		resolveGitCommit: func(context.Context) (string, error) { return "abc", nil },
-		makeTempDir:      func() (string, error) { t.Fatal("makeTempDir must not be called"); return "", nil },
 	}
 
 	_, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
 		Name:                "my-app",
 		Description:         "internal app",
 		SakiControlPlaneURL: "https://cp.internal?token=test-token",
+		AppDir:              t.TempDir(),
 	})
 	if !errors.Is(err, prepareErr) {
 		t.Fatalf("expected prepare error, got %v", err)
@@ -160,32 +118,25 @@ func TestDeployApp_StopsOnDockerFailure(t *testing.T) {
 	cp := &stubControlPlane{
 		prepareRes: controlplane.PrepareAppResponse{
 			Repository:  "registry.internal/owner/my-app",
-			PushToken:   "push-token",
 			RequiredTag: "abc1234",
 		},
 	}
 	dockerStub := &stubDockerClient{buildErr: dockerErr}
 
 	svc := &Service{
-		newControlPlane:   func(string) (controlPlaneClient, error) { return cp, nil },
-		newDockerClient:   func(Logger) dockerClient { return dockerStub },
-		resolveGitCommit:  func(context.Context) (string, error) { return "abc", nil },
-		makeTempDir:       func() (string, error) { return t.TempDir(), nil },
-		removeAll:         func(string) error { return nil },
-		cloneFromPrepare:  func(context.Context, tooltemplate.PrepareResponse, string) error { return nil },
-		writeEnv:          func(string, string, string) error { return nil },
-		templateRepoValue: func() string { return "" },
-		templateRefValue:  func() string { return "" },
-		dockerRegistryValue: func() string {
-			return ""
-		},
-		logger:            &noopLogger{},
+		newControlPlane:      func(string) (controlPlaneClient, error) { return cp, nil },
+		newDockerClient:      func(Logger) dockerClient { return dockerStub },
+		resolveGitCommit:     func(context.Context) (string, error) { return "abc", nil },
+		dockerRegistryValue:  func() string { return "" },
+		controlPlaneURLValue: func() string { return "" },
+		logger:               &noopLogger{},
 	}
 
 	_, err := svc.DeployApp(context.Background(), contracts.DeployAppInput{
 		Name:                "my-app",
 		Description:         "internal app",
 		SakiControlPlaneURL: "https://cp.internal?token=test-token",
+		AppDir:              t.TempDir(),
 	})
 	if !errors.Is(err, dockerErr) {
 		t.Fatalf("expected docker error, got %v", err)
@@ -203,18 +154,11 @@ func TestDeployApp_RegistryOnlySkipsDeploy(t *testing.T) {
 		},
 	}
 	dockerStub := &stubDockerClient{}
-	tempDir := filepath.Join(t.TempDir(), "work")
 
 	svc := &Service{
 		newControlPlane:      func(string) (controlPlaneClient, error) { return cp, nil },
 		newDockerClient:      func(Logger) dockerClient { return dockerStub },
 		resolveGitCommit:     func(context.Context) (string, error) { return "abc", nil },
-		makeTempDir:          func() (string, error) { return tempDir, nil },
-		removeAll:            func(string) error { return nil },
-		cloneFromPrepare:     func(context.Context, tooltemplate.PrepareResponse, string) error { return nil },
-		writeEnv:             func(string, string, string) error { return nil },
-		templateRepoValue:    func() string { return "" },
-		templateRefValue:     func() string { return "" },
 		dockerRegistryValue:  func() string { return "" },
 		registryOnlyValue:    func() string { return "true" },
 		controlPlaneURLValue: func() string { return "" },
@@ -225,6 +169,7 @@ func TestDeployApp_RegistryOnlySkipsDeploy(t *testing.T) {
 		Name:                "my-app",
 		Description:         "internal app",
 		SakiControlPlaneURL: "https://cp.internal?token=test-token",
+		AppDir:              t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -240,25 +185,34 @@ func TestDeployApp_RegistryOnlySkipsDeploy(t *testing.T) {
 	}
 }
 
-func TestResolveTemplateRepository(t *testing.T) {
-	t.Run("uses prepare repository when provided", func(t *testing.T) {
-		got := resolveTemplateRepository("https://example.com/prepare.git", "https://example.com/env.git")
-		if got != "https://example.com/prepare.git" {
-			t.Fatalf("expected prepare repository, got %q", got)
+func TestResolveAppDir(t *testing.T) {
+	t.Run("accepts existing directory", func(t *testing.T) {
+		dir := t.TempDir()
+		got, err := resolveAppDir(dir)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if got != dir {
+			t.Fatalf("expected %q, got %q", dir, got)
 		}
 	})
 
-	t.Run("falls back to env repository when prepare repository is empty", func(t *testing.T) {
-		got := resolveTemplateRepository(" ", "https://example.com/env.git")
-		if got != "https://example.com/env.git" {
-			t.Fatalf("expected env repository, got %q", got)
+	t.Run("rejects missing directory", func(t *testing.T) {
+		_, err := resolveAppDir(filepath.Join(t.TempDir(), "missing"))
+		if err == nil {
+			t.Fatal("expected error")
 		}
 	})
 
-	t.Run("falls back to default repository when neither prepare nor env repository is set", func(t *testing.T) {
-		got := resolveTemplateRepository(" ", " ")
-		if got != defaultTemplateRepository {
-			t.Fatalf("expected default repository %q, got %q", defaultTemplateRepository, got)
+	t.Run("rejects file path", func(t *testing.T) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "app.txt")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		_, err := resolveAppDir(file)
+		if err == nil {
+			t.Fatal("expected error")
 		}
 	})
 }
@@ -291,6 +245,26 @@ func TestResolveImageRepository(t *testing.T) {
 		got := resolveImageRepository("owner/my-app", "https://registry.corgi-teeth.ts.net/v2/")
 		if got != "registry.corgi-teeth.ts.net/owner/my-app" {
 			t.Fatalf("expected prefixed repository, got %q", got)
+		}
+	})
+
+	t.Run("strips session-like UUID segments from path", func(t *testing.T) {
+		got := resolveImageRepository(
+			"registry.internal/owner/11111111-1111-4111-8111-111111111111/my-app",
+			"https://registry.corgi-teeth.ts.net/v2/",
+		)
+		if got != "registry.corgi-teeth.ts.net/owner/my-app" {
+			t.Fatalf("expected UUID segment to be removed, got %q", got)
+		}
+	})
+
+	t.Run("strips UUID suffixes from path segment names", func(t *testing.T) {
+		got := resolveImageRepository(
+			"registry.internal/owner/my-app-11111111111111111111111111111111",
+			"https://registry.corgi-teeth.ts.net/v2/",
+		)
+		if got != "registry.corgi-teeth.ts.net/owner/my-app" {
+			t.Fatalf("expected UUID suffix to be removed, got %q", got)
 		}
 	})
 }
@@ -375,24 +349,12 @@ func (s *stubControlPlane) DeployApp(_ context.Context, req controlplane.DeployA
 }
 
 type stubDockerClient struct {
-	loginRegistry string
-	loginUser     string
-	loginPassword string
-	loginErr      error
-
 	buildDir string
 	image    string
 	buildErr error
 
 	pushImage string
 	pushErr   error
-}
-
-func (s *stubDockerClient) Login(_ context.Context, registry, username, password string) error {
-	s.loginRegistry = registry
-	s.loginUser = username
-	s.loginPassword = password
-	return s.loginErr
 }
 
 func (s *stubDockerClient) Build(_ context.Context, workDir, image string) error {

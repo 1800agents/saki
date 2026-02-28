@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -14,8 +15,16 @@ type Logger struct {
 	logger *slog.Logger
 }
 
+const defaultDebugLogPath = "/tmp/saki.log"
+
 func New() *Logger {
-	return NewWithWriter(io.Writer(os.Stderr))
+	return NewWithWriter(defaultWriter(
+		os.Stderr,
+		os.Getenv,
+		func(path string) (io.Writer, error) {
+			return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		},
+	))
 }
 
 func NewWithWriter(w io.Writer) *Logger {
@@ -117,4 +126,53 @@ func redactValue(input, key string) string {
 	}
 
 	return input
+}
+
+func defaultWriter(
+	stderr io.Writer,
+	getenv func(string) string,
+	openDebugLog func(path string) (io.Writer, error),
+) io.Writer {
+	if !debugLoggingEnabled(getenv) {
+		return stderr
+	}
+
+	path := strings.TrimSpace(getenv("SAKI_TOOLS_LOG_PATH"))
+	if path == "" {
+		path = defaultDebugLogPath
+	}
+
+	fileWriter, err := openDebugLog(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to open debug log file %q: %v\n", path, err)
+		return stderr
+	}
+
+	return io.MultiWriter(stderr, fileWriter)
+}
+
+func debugLoggingEnabled(getenv func(string) string) bool {
+	raw := firstNonEmpty(
+		getenv("SAKI_TOOLS_DEBUG"),
+		getenv("SAKI_TOOLS_MCP_DEBUG"),
+	)
+	if raw == "" {
+		return true
+	}
+	return parseBool(raw)
+}
+
+func parseBool(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	return strings.EqualFold(trimmed, "1") || strings.EqualFold(trimmed, "true")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		trimmed := strings.TrimSpace(v)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
