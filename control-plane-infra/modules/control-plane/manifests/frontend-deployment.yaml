@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane-frontend
+  namespace: ${namespace}
+  labels:
+    app: control-plane-frontend
+spec:
+  replicas: ${replicas}
+  selector:
+    matchLabels:
+      app: control-plane-frontend
+  template:
+    metadata:
+      labels:
+        app: control-plane-frontend
+    spec:
+      containers:
+        - name: control-plane-frontend
+          image: ${image}
+          ports:
+            - containerPort: 3000

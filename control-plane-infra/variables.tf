@@ -28,3 +28,8 @@ variable "control_plane_image" {
   default     = "registry.corgi-teeth.ts.net/saki/control-plane:latest"
 }
 
+variable "control_plane_frontend_image" {
+  description = "Docker image for the control plane frontend."
+  type        = string
+  default     = "registry.corgi-teeth.ts.net/saki/control-plane-frontend:latest"
+}

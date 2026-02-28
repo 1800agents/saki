@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: control-plane
+  name: control-plane-frontend
   namespace: ${namespace}
   annotations:
     tailscale.com/hostname: ${tailscale_hostname}
@@ -16,9 +16,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: control-plane
+                name: control-plane-frontend
                 port:
-                  number: 8080
+                  number: 3000
   tls:
     - hosts:
         - ${tailscale_hostname}

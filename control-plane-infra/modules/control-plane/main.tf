@@ -3,6 +3,11 @@ variable "image" {
   type        = string
 }
 
+variable "frontend_image" {
+  description = "Docker image for the control plane frontend (e.g. registry.corgi-teeth.ts.net/saki/control-plane-frontend:latest)."
+  type        = string
+}
+
 variable "postgres_host" {
   description = "PostgreSQL host (e.g. from db module output)."
   type        = string
@@ -32,8 +37,20 @@ variable "tailscale_hostname" {
   default     = "saki-control-plane"
 }
 
+variable "frontend_tailscale_hostname" {
+  description = "Tailscale hostname for the control plane frontend (becomes <hostname>.<tailnet>.ts.net)."
+  type        = string
+  default     = "saki"
+}
+
 variable "replicas" {
   description = "Number of control plane replicas."
+  type        = number
+  default     = 1
+}
+
+variable "frontend_replicas" {
+  description = "Number of control plane frontend replicas."
   type        = number
   default     = 1
 }
@@ -45,7 +62,7 @@ variable "default_app_ttl_hours" {
 }
 
 locals {
-  namespace = "control-plane"
+  namespace = "saki"
 }
 
 # ── Namespaces ────────────────────────────────────────────────────────────────
@@ -155,9 +172,47 @@ resource "kubernetes_manifest" "ingress" {
   depends_on = [kubernetes_manifest.service]
 }
 
+# ── Frontend Deployment ───────────────────────────────────────────────────────
+
+resource "kubernetes_manifest" "frontend_deployment" {
+  manifest = yamldecode(templatefile("${path.module}/manifests/frontend-deployment.yaml", {
+    namespace = local.namespace
+    image     = var.frontend_image
+    replicas  = var.frontend_replicas
+  }))
+
+  depends_on = [kubernetes_namespace.control_plane]
+}
+
+# ── Frontend Service ──────────────────────────────────────────────────────────
+
+resource "kubernetes_manifest" "frontend_service" {
+  manifest = yamldecode(templatefile("${path.module}/manifests/frontend-service.yaml", {
+    namespace = local.namespace
+  }))
+
+  depends_on = [kubernetes_manifest.frontend_deployment]
+}
+
+# ── Frontend Ingress ──────────────────────────────────────────────────────────
+
+resource "kubernetes_manifest" "frontend_ingress" {
+  manifest = yamldecode(templatefile("${path.module}/manifests/frontend-ingress.yaml", {
+    namespace          = local.namespace
+    tailscale_hostname = var.frontend_tailscale_hostname
+  }))
+
+  depends_on = [kubernetes_manifest.frontend_service]
+}
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 output "url" {
   value       = "https://${var.tailscale_hostname}.<tailnet>.ts.net"
-  description = "Control plane URL on the tailnet. Replace <tailnet> with your actual tailnet name."
+  description = "Control plane backend URL on the tailnet. Replace <tailnet> with your actual tailnet name."
+}
+
+output "frontend_url" {
+  value       = "https://${var.frontend_tailscale_hostname}.<tailnet>.ts.net"
+  description = "Control plane frontend URL on the tailnet. Replace <tailnet> with your actual tailnet name."
 }

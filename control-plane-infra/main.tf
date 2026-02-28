@@ -57,8 +57,9 @@ module "registry" {
 module "control_plane" {
   source = "./modules/control-plane"
 
-  image         = var.control_plane_image
-  postgres_host = module.db.postgres_host
+  image          = var.control_plane_image
+  frontend_image = var.control_plane_frontend_image
+  postgres_host  = module.db.postgres_host
 
   depends_on = [module.base, module.db, module.tailscale]
 }
