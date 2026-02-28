@@ -40,6 +40,18 @@ tailscale_oauth_client_secret = "<client-secret>"
 terraform apply
 ```
 
+By default this deploys:
+- backend image `registry.corgi-teeth.ts.net/saki/control-plane:latest`
+- frontend image `registry.corgi-teeth.ts.net/saki/control-plane-frontend:latest`
+
+Override with:
+
+```shell
+terraform apply \
+  -var="control_plane_image=<backend-image>" \
+  -var="control_plane_frontend_image=<frontend-image>"
+```
+
 ## Format Files
 ```
 terraform fmt --recursive
