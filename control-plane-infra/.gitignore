@@ -1,0 +1,14 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+.terraform.tfstate.lock.info
+*.tfvars
+crash.log
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
